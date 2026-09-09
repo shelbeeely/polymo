@@ -12,29 +12,41 @@ pet left empty for long enough dies for good, with a reset you have to ask for.
 That is the loop: your screen time is the pet's environment, not a setting
 inside it.
 
-You talk to it out loud, and it answers out of its own speaker.
+You talk to it out loud, and it answers out of its own speaker. Show it
+something through your phone's camera and it reacts to that too — the phone is
+the pet's second brain, not a separate gadget with its own screen to check.
 
 [![I Built a Virtual Pet that Dies when you Doomscroll](https://img.youtube.com/vi/Tyy3dYI-5ds/maxresdefault.jpg)](https://www.youtube.com/watch?v=Tyy3dYI-5ds)
 
 *I Built a Virtual Pet that Dies when you Doomscroll* — the build, and what it
-does. Click through to YouTube.
+does. Click through to YouTube. Recorded before the Gemini Nano migration
+below, so the pipeline it shows (Whisper/llama.cpp/Piper) is the one this app
+no longer runs — the loop and the hardware it describes are still current.
 
-Everything it says is generated on your phone, on-device. There is no account
-and no server.
+Everything it says is generated on your phone, on-device — hearing, thinking
+and speaking all run locally through Gemini Nano and the platform's own
+text-to-speech. There is no account and no server of PolyMO's own.
 
-**It cannot phone home, and a test proves it.** The app declares no `INTERNET`
-permission at all — these eight are the complete list:
+**It does talk to Google, though, and the manifest says so rather than hiding
+it.** Gemini Nano and ML Kit Vision run on-device, but Android routes their
+one-time "is this downloaded" check through Google Play services, which needs
+`INTERNET`/`ACCESS_NETWORK_STATE`. That is a real change from an earlier
+version of this app, which declared no `INTERNET` permission at all — see
+[NOTICE](NOTICE) for exactly what that connectivity is and is not used for.
+The full permission list:
 
 ```
-BLUETOOTH_CONNECT  BLUETOOTH_SCAN  RECORD_AUDIO  PACKAGE_USAGE_STATS
-POST_NOTIFICATIONS  RECEIVE_BOOT_COMPLETED
+BLUETOOTH_CONNECT  BLUETOOTH_SCAN  RECORD_AUDIO  CAMERA  PACKAGE_USAGE_STATS
+POST_NOTIFICATIONS  RECEIVE_BOOT_COMPLETED  INTERNET  ACCESS_NETWORK_STATE
 FOREGROUND_SERVICE  FOREGROUND_SERVICE_CONNECTED_DEVICE
 ```
 
-`PermissionCopyTest` reads `AndroidManifest.xml` and fails the build if
-`INTERNET` is ever added, with the manifest wired in as a declared test input so
-the check cannot go stale. For a device that listens in your home and can read
-your notifications, that guarantee seemed worth making mechanical.
+`PermissionCopyTest` reads `AndroidManifest.xml` directly and checks the
+in-app Permissions page's copy against it, with the manifest wired in as a
+declared test input so the check cannot go stale. For a device that listens in
+your home, watches through its camera and can read your notifications, a
+mechanical check on what the app actually asks for — and what it honestly
+says about that — seemed worth having.
 
 ## How it works
 
@@ -42,24 +54,41 @@ The pet is the thing you interact with. The phone is the compute it borrows.
 
 ```
    ESP32-S3 board                        Android phone
-  ┌────────────────┐                  ┌──────────────────────┐
-  │  AMOLED face   │                  │  Whisper   (hearing) │
-  │  mic + speaker │ ◄─── BLE ──────► │  llama.cpp (thinking)│
-  │  touch         │      Opus audio  │  Piper     (voice)   │
-  │  the simulation│      + protocol  │  screen-time sensor  │
-  └────────────────┘                  └──────────────────────┘
+  ┌────────────────┐                  ┌───────────────────────────┐
+  │  AMOLED face   │                  │  Gemini Nano / AICore     │
+  │  mic + speaker │ ◄─── BLE ──────► │    (hearing + thinking)   │
+  │  touch         │      Opus audio  │  platform TextToSpeech    │
+  │  the simulation│      + protocol  │    (voice)                │
+  └────────────────┘                  │  camera + ML Kit Vision   │
+                                       │    (the second brain)    │
+                                       │  screen-time sensor      │
+                                       └───────────────────────────┘
 ```
 
 You speak at the pet. The board streams Opus audio to the phone, which
-transcribes it, asks a local language model for a reply in the pet's voice,
-synthesises speech, and streams it back for the pet to play. The phone never
-joins the conversation — it has no UI for talking to the pet, only for setting
-it up.
+transcribes it with Speech Recognition (Gemini Nano, Advanced mode), asks the
+Prompt API for a reply in the pet's voice, synthesises speech with the
+platform's own `TextToSpeech`, and streams it back for the pet to play. The
+phone never joins the conversation — it has no UI for talking to the pet, only
+for setting it up and for showing it things.
+
+**AICore-exclusive, on purpose.** This app runs only on hardware that can run
+Gemini Nano — a Pixel 10 today. A phone that fails the eligibility check is
+stopped before it ever reaches the conversation screen, with no degraded
+fallback: see `AiCoreAvailability.kt` and CLAUDE.md.
+
+**The phone's camera is a second sense, not a second app.** Point it at
+something and the full ML Kit Vision roster — labelling, face and pose
+detection, object tracking, barcode and text recognition, segmentation —
+looks at the frame, and the pet answers *in character* through the same
+speaker, the same way it answers a spoken question. A personal document
+scanner rides along for your own use, kept deliberately separate from the
+pet's perception. See `android/.../vision/`.
 
 **The pet owns its own life.** Hunger, happiness, life stage and death are
 simulated on the board, persisted to its own flash, and timed by its own clock.
-The phone contributes screen time, language and models. If you never connect a
-phone again, the pet goes on living — it just goes quiet.
+The phone contributes screen time, language, Gemini Nano and its camera. If you
+never connect a phone again, the pet goes on living — it just goes quiet.
 
 ## Hardware
 
@@ -70,9 +99,14 @@ phone again, the pet goes on living — it just goes quiet.
 | Orientation | the UI runs rotated — 448 wide, 368 tall |
 | Audio | onboard mic and speaker |
 | Link | BLE to an Android phone |
+| Phone | a Gemini Nano/AICore-capable device — a Pixel 10 as of writing |
 
 Both V1 and V2 board revisions are supported; the panel driver (SH8601 or
 CO5300) is detected at runtime.
+
+A camera on the pet itself, and a docked USB-video mode, are planned but not
+yet built — see CLAUDE.md's "Pixel 10 as a second brain" section for exactly
+what's shipped versus deferred and why.
 
 ## The two documents
 
@@ -89,21 +123,23 @@ opposite), and the component rules the UI is built from.
 **[`CLAUDE.md`](CLAUDE.md) — how to work on this.** Written as instructions for
 [Claude Code](https://claude.com/claude-code), which is what it is named after,
 and it doubles as the conventions file: the build commands and the traps in them,
-the rule that faces and personas are *generated* and must not be hand-edited, and
-the practice that every test here was checked by breaking the code it covers and
-confirming it fails. Read it before changing anything, whatever you are using to
-change it.
+the rule that faces and personas are *generated* and must not be hand-edited,
+the AICore migration's hard gate and what the phone's camera does and doesn't do
+yet, and the practice that every test here was checked by breaking the code it
+covers and confirming it fails. Read it before changing anything, whatever you
+are using to change it.
 
 ## Repository layout
 
 ```
 pet-esp32/      ESP-IDF firmware — the display, mic, speaker and the simulation
-android/        the app — BLE, Whisper, llama.cpp, Piper, screen-time tracking
+android/        the app — BLE, Gemini Nano (AICore), platform TTS, ML Kit
+                Vision/camera, screen-time tracking
 design-system/  design tokens, plus the pet's faces and personas (source of truth)
 tools/          generators that turn faces and personas into firmware and app code
 shared/         the wire protocol header shared by both sides
 hardware/       printable enclosures (STL) — the shells shown in the video
-licences/       full texts for the bundled fonts and for GPL-3.0
+licences/       full texts for the bundled fonts and (historical) the GPL-3.0
 DESIGN.md       product and UX decisions, cited from the source by section
 CLAUDE.md       build commands, conventions, and the traps worth knowing
 ```
@@ -146,21 +182,23 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
 
 #### Native dependencies
 
-The app links llama.cpp, whisper.cpp, Piper, Opus and espeak-ng. Those are not
-in this repository — about 1.3 GB of unmodified third-party source, several of
-them git clones whose own `.git` would become a broken gitlink here. What is
-kept instead is the exact commit each was built from, in [NOTICE](NOTICE), so a
-build can be reproduced rather than approximated:
+The app links exactly one native library now: **Opus**, the pet-speaker/BLE
+audio codec. It is not in this repository — it is a git clone whose own `.git`
+would become a broken gitlink here. What is kept instead is the exact commit it
+was built from, in [NOTICE](NOTICE), so a build can be reproduced rather than
+approximated:
 
 ```bash
 tools/fetch-natives.sh
 ```
 
-Read its header before running it. It fetches sources only — two prebuilt
-shared libraries still have to be placed by hand — and three dependencies have
-no recorded version, which NOTICE marks rather than hides.
+Everything else that used to live here — llama.cpp, Whisper.cpp, Piper,
+espeak-ng, ONNX Runtime, and the prebuilt `.so`/phoneme-data files they needed —
+is gone. The LLM and speech recognition are Gemini Nano via AICore (a Gradle
+dependency, downloaded by Google Play services, not vendored source), and
+text-to-speech is the Android platform's own `android.speech.tts.TextToSpeech`.
 
-Tests — 512 of them, no device required:
+Tests — 472 of them, no device required:
 
 ```bash
 cd android && ./gradlew testDebugUnitTest
@@ -174,17 +212,18 @@ generated face sets, colour tokens and component roster in sync with
 
 ## Models
 
-**No models ship with the app.** You supply three, and import each through the
-system file picker:
+**No model files ship with the app, and none are imported by hand any more.**
+The LLM and speech recognition are Gemini Nano, downloaded by Android through
+Google Play services on first use, per Google's own eligibility and download
+flow — there is no `.gguf`, no Whisper `.bin`, and nothing to pick with a file
+browser. Text-to-speech is whatever voice the Android platform's own
+`TextToSpeech` engine has installed, also not something this app bundles or
+manages.
 
-| Role | Format | Notes |
-|---|---|---|
-| Thinking | `.gguf` | any small instruct model llama.cpp can load |
-| Hearing | `.bin` | a Whisper model |
-| Voice | `.onnx` | a Piper voice |
-
-An earlier build bundled a Whisper model and cost ~75 MB in the APK and another
-~75 MB unpacked, which made hearing the one faculty nobody got to choose.
+An earlier version of this app worked the older way — three user-supplied
+model files (`.gguf`, a Whisper `.bin`, a Piper `.onnx`) — which is what the
+now-removed `ModelSettingsScreen`'s import flow, and the video linked above,
+show.
 
 ## The pet's face and voice are generated
 
@@ -205,45 +244,23 @@ design, written where they can fail a build.
 
 ## Licence
 
-PolyMO is licensed in three layers, because one dependency forces it to be.
+PolyMO's source is **Apache-2.0**, in full — see [LICENSE](LICENSE).
 
-| | Licence | |
-|---|---|---|
-| `pet-esp32/` firmware | Apache-2.0 | Clean. Links nothing copyleft |
-| `android/` source, `design-system/`, `tools/` | Apache-2.0 | Reusable under Apache terms on its own |
-| **A released APK** | **GPL-3.0** | Links espeak-ng, so the binary inherits the GPL |
+That is a change worth stating plainly. An earlier version of this app linked
+espeak-ng (GPL-3.0-or-later) as part of Piper's text-to-phoneme step, which
+meant any *released APK* — the combined binary, not the source tree — had to
+be distributed under GPL-3.0 as well. The Gemini Nano migration removed Piper
+and espeak-ng from the build entirely: text-to-speech is now the Android
+platform's own engine, called through its ordinary SDK API rather than linked
+into this app's native code. With espeak-ng gone, nothing in the current build
+carries a copyleft obligation, native or otherwise — Opus (the one remaining
+native dependency) is BSD-3-Clause, and ML Kit/CameraX/Play Services are
+ordinary Google-published Android libraries, not code this app bundles or
+statically links.
 
-The full texts are [LICENSE](LICENSE) (Apache-2.0) and
-[licences/GPL-3.0.txt](licences/GPL-3.0.txt). [NOTICE](NOTICE) lists every
-dependency and its terms.
-
-### Why the APK is different
-
-The app's native library links espeak-ng, which is GPL-3.0-or-later, and the
-app bundles espeak-ng's phoneme data. Piper uses it to turn text into phonemes;
-the pet cannot speak without it.
-
-Apache-2.0 is one-way compatible with the GPL — Apache source may be combined
-into a GPL work, and the result is GPL-3.0. So the source in this tree stays
-Apache-2.0 and is reusable as such, while any binary linking espeak-ng must be
-distributed under GPL-3.0. The firmware is untouched by this: it never links
-espeak, and the audio it plays arrives over BLE already synthesised.
-
-Note that the obligation attaches to *linking*, not to calling. Piper does have
-a non-espeak phonemizer (`PhonemeType::TextPhonemes`), but selecting it changes
-nothing unless espeak-ng also leaves the link — and nearly every published
-Piper voice is an espeak-phoneme model, so leaving espeak behind would mean
-leaving the voice ecosystem behind with it.
-
-### Releasing an APK
-
-The APK is a GPL-3.0 conveyance of a combined work. To stay compliant:
-
-- [ ] Tag the exact commit the APK was built from, and publish that tag
-- [ ] Label the release **GPL-3.0** — the repository itself stays Apache-2.0
-- [ ] Include `licences/GPL-3.0.txt` alongside the download
-- [ ] Link the source tag from the release notes, so recipients can obtain the
-      corresponding source
-- [ ] Keep that source available for as long as the download is offered
-
-This is a description of the licences involved, not legal advice.
+[NOTICE](NOTICE) has the current dependency list and states this history in
+full; `licences/GPL-3.0.txt` stays in the repository as a historical reference
+for APKs built from older commits, not because a current build needs it. This
+is a description of the licences involved, not legal advice — if you are
+building on top of this project's history rather than its current state,
+check which commit you actually mean.

@@ -68,7 +68,7 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
   ./gradlew assembleDebug --offline
 ```
 
-Tests: `./gradlew testDebugUnitTest --offline` (512, no device needed).
+Tests: `./gradlew testDebugUnitTest --offline` (472, no device needed).
 **Write them by mutation** — every test here was checked by breaking the code it
 covers and confirming it fails. That practice has already caught two worthless
 tests in this repo. The second was a `ContrastTest` assertion
@@ -97,17 +97,12 @@ files changed, which is the one case the sync tests exist for.
   looked fine in a build and wrong on the board. Record the measurement, not
   just the fix.
   **Scoped exception during the Gemini Nano migration**: development runs
-  against an Android emulator and a Wokwi-simulated ESP32 first, with
-  physical-hardware verification as a deliberate, separately-announced later
-  phase — not a rewrite of the rule above, which still holds generally. One
-  real limit worth knowing: AICore is hardware-gated, so
-  `Generation.getClient().checkStatus()` and Speech Recognition Advanced
-  mode's `checkStatus()` genuinely report `UNAVAILABLE` on an emulator — that
-  makes the emulator a real, not simulated, check of the hard-block path
-  (`DeviceUnsupported`/`FirstRunStep.DEVICE_UNSUPPORTED`), but it cannot prove
-  anything about actual Gemini Nano behaviour (persona quality, latency,
-  transcription accuracy). Those stay unverified until a physical Pixel
-  10/11 pass happens.
+  against an Android emulator and Wokwi first, with physical verification a
+  later, separately-announced phase — the general rule still holds otherwise.
+  AICore is hardware-gated and genuinely reports `UNAVAILABLE` on an emulator,
+  so the hard-block path (`DeviceUnsupported`) is really verified there — but
+  nothing about actual Gemini Nano behaviour (persona quality, latency,
+  transcription accuracy) is, until a physical Pixel 10/11 pass happens.
 - **Commit messages carry the *why*.** They are long here on purpose and are a
   primary record. Write them with `git commit -F <file>` — backticks in
   `-m "…"` get executed by the shell and silently delete text.
@@ -145,35 +140,24 @@ the pet cannot look like one character and speak as another.
 
 The governing principle, stated by the user rather than inferred: **the
 Pixel 10 should communicate as much back to the pet as possible for it to
-function.** Vision is not a phone-side utility bolted onto the app — every
-perception result folds into a persona turn (grounding text → the prompt →
-TTS → the pet's own speaker), reusing `PetConversationEngine`'s existing
-reply pipeline exactly the way a spoken question does. See `vision/`:
-[`VisionFinding.kt`](android/app/src/main/kotlin/com/digitalpet/vision/VisionFinding.kt)
-and
-[`VisionDescription.kt`](android/app/src/main/kotlin/com/digitalpet/vision/VisionDescription.kt)
-are pure Kotlin and unit-tested; [`VisionAnalyzer.kt`](android/app/src/main/kotlin/com/digitalpet/vision/VisionAnalyzer.kt)
-is the ML Kit-facing wrapper, isolated per detector so one failing detector
-never silences the rest.
+function.** Every vision result folds into a persona turn — grounding text →
+the prompt → TTS → the pet's own speaker — reusing `PetConversationEngine`'s
+existing reply pipeline, not a separate output channel. See `vision/`:
+`VisionFinding.kt`/`VisionDescription.kt` are pure Kotlin and unit-tested;
+`VisionAnalyzer.kt` is the ML Kit wrapper, isolated per detector so one
+failure never silences the rest.
 
-**Shipped — the Pixel 10's own camera (phase 11).** CameraX, plus the full
-ML Kit Vision roster the user asked for by name, not a curated subset: Image
-Labeling, Face Detection (presence/count only, never identity), Face Mesh
-Detection (kept in after explicitly confirming it still isn't identity
-matching), Pose Detection, Object Detection and Tracking, Barcode Scanning,
-Text Recognition, and Selfie Segmentation. All run in single-image mode,
-which for a still from this phone's own camera is not a compromise — nearly
-every one of these detectors runs a frame through the same model whether or
-not there is a live feed to track across. `PetConversationEngine.describeSight`
-sends the frame two ways at once: the raw bitmap to the Prompt API's
-multimodal call (`ImagePart` + `TextPart`, real signature confirmed by
-decompiling the AAR — see `LlmManager.generate`), and the detectors'
-structured findings as grounding text, because a dedicated OCR/barcode
-detector reads a value exactly where a small on-device model looking at
-pixels might not. Document Scanner is also wired, as the personal utility
-the user asked for — but deliberately *outside* this loop: a scan's pages
-are for the user, never fed to a detector, and `acknowledgeDocumentScan`
-only ever receives a page count.
+**Shipped — the Pixel 10's own camera (phase 11).** CameraX plus the full ML
+Kit Vision roster — Image Labeling, Face Detection (presence/count only,
+never identity), Face Mesh Detection, Pose Detection, Object Detection &
+Tracking, Barcode Scanning, Text Recognition, Selfie Segmentation — all
+single-image mode. `PetConversationEngine.describeSight` sends both the raw
+frame (the Prompt API's multimodal `ImagePart`+`TextPart`, see
+`LlmManager.generate`) and the detectors' structured findings, since a
+dedicated OCR/barcode detector can read a value more exactly than a small
+on-device model looking at pixels. Document Scanner is wired too, as a
+personal utility, deliberately *outside* this loop — a scan's pages are for
+the user, never fed to a detector.
 
 **Deferred, and why — in order:**
 
@@ -182,21 +166,16 @@ only ever receives a page count.
 | 9 | The pet's own onboard camera (BLE, ambient on-demand stills) | Physical camera hardware for the ESP32 pet, which does not exist yet — the user is building/adding it themselves. |
 | 10 | Docked live video over USB-OTG (Camera2 `EXTERNAL`) | The same hardware as phase 9, **and** an empirical test of whether this Pixel 10 actually exposes Camera2's `EXTERNAL` hardware level — OEM-gated, not guaranteed by the platform. No code gets written for phase 10 before that test runs. |
 
-**Non-negotiable, carried over from planning and worth restating here because
-getting it wrong breaks the whole migration: never unlock the bootloader** to
-force phase 10's `EXTERNAL` support if the empirical test fails. Speech
-Recognition Advanced mode — the foundation everything above depends on — is
-unsupported on unlocked bootloaders. If Camera2 `EXTERNAL` is unreachable
-without unlocking, phase 10 falls back to raw `UsbManager`/UVC-descriptor
-parsing instead (Path B), not to unlocking.
+**Non-negotiable: never unlock the bootloader** to force phase 10's
+`EXTERNAL` support. Speech Recognition Advanced mode — everything above
+depends on it — is unsupported on unlocked bootloaders; fall back to raw
+`UsbManager`/UVC-descriptor parsing (Path B) instead.
 
-**Already wired, and not part of this migration's camera work at all — noted
-here so its absence from the roster above doesn't read as a gap:** Android's
-own App Usage Stats API (`android.app.usage.UsageStatsManager`, via
-`AppUsageRepository`) has been feeding the pet since before AICore existed —
-it is the screen-time/sickness mechanic DESIGN.md §1 decision 3 describes,
-and it answers to the exact same "the phone is the pet's second brain"
-principle vision now extends: what the phone learns, the pet hears about.
+**Already wired, and not part of this camera work at all** — noted so its
+absence from the roster above doesn't read as a gap: Android's own App Usage
+Stats API (`AppUsageRepository`) has fed the pet since before AICore
+existed, as the screen-time/sickness mechanic (DESIGN.md §1 decision 3),
+under the same second-brain principle.
 
 ## Where this is heading
 

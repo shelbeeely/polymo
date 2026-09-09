@@ -4,82 +4,63 @@ Copyright 2026 Brendan Polley
 This product includes software developed for the PolyMO project.
 
 --------------------------------------------------------------------------
-Three layers
+Licence, in one layer now
 --------------------------------------------------------------------------
 
-  pet-esp32/                       Apache-2.0   ESP32-S3 firmware. Links
-                                                nothing copyleft.
-  android/, design-system/,        Apache-2.0   PolyMO's own source. Reusable
-  tools/, shared/                               under Apache terms on its own.
-  A released Android APK           GPL-3.0      Links espeak-ng; the combined
-                                                binary inherits the GPL.
+  Everything in this repository, and any APK built from the current      Apache-2.0
+  commit history (post Gemini Nano migration) -- pet-esp32/, android/,
+  design-system/, tools/, shared/
 
-Full texts: LICENSE (Apache-2.0) and licences/GPL-3.0.txt (GPL-3.0).
+Full text: LICENSE (Apache-2.0).
 
---------------------------------------------------------------------------
-Why a released APK is GPL-3.0
---------------------------------------------------------------------------
-
-The app's native library (libdigitalpet-native.so) links espeak-ng, which is
-licensed GPL-3.0-or-later, and the app bundles espeak-ng's phoneme data under
-android/app/src/main/assets/espeak-ng-data/. espeak-ng is used by Piper for
-text-to-phoneme conversion; the pet cannot speak without it.
-
-Apache-2.0 is one-way compatible with the GPL: Apache-2.0 code may be combined
-into a GPL-3.0 work, and the result is GPL-3.0. Consequently ANY BINARY THAT
-LINKS espeak-ng -- including a released APK -- must be distributed under
-GPL-3.0, with the corresponding source and licence text made available to
-recipients.
-
-The obligation attaches to linking, not to calling. Piper does provide a
-non-espeak phonemizer (PhonemeType::TextPhonemes), but choosing it changes
-nothing while espeak-ng remains in the link, and nearly every published Piper
-voice is an espeak-phoneme model.
-
-The ESP32-S3 firmware is unaffected. It never links espeak-ng; the audio it
-plays arrives over BLE already synthesised.
-
-PolyMO's own source files remain Apache-2.0 and may be reused under those
-terms independently of the combined binary.
-
-This is a statement of the licences involved, not legal advice.
+This used to be a three-layer split, with a released APK required to be
+GPL-3.0 because the app's native library linked espeak-ng. That dependency,
+and Piper (the text-to-speech engine that needed it), are gone from the
+build entirely as of the Gemini Nano migration -- see "History: why a
+released APK used to be GPL-3.0" below. Nothing currently linked into this
+app carries a copyleft obligation.
 
 --------------------------------------------------------------------------
 Third-party components
 --------------------------------------------------------------------------
 
-Linked into the Android native library. The commit is given where it is known,
-because "the source corresponding to this binary" is not a claim that can be
-made without one -- see the note below the table.
+Linked into the Android native library. The commit is given where it is
+known, because "the source corresponding to this binary" is not a claim
+that can be made without one.
 
-  espeak-ng          GPL-3.0-or-later   https://github.com/espeak-ng/espeak-ng
-                     commit fbe4b3764285 (1.52.0-292-gfbe4b376)
-                     licence text: licences/GPL-3.0.txt
-  llama.cpp          MIT                https://github.com/ggerganov/llama.cpp
-                     commit bec4772f6a25 (b9905-8)
-  whisper.cpp        MIT                https://github.com/ggerganov/whisper.cpp
-                     commit 6fc7c33b4c3a (v1.9.1-81)
-  Piper              MIT                https://github.com/rhasspy/piper
-                     commit 73c04d81d559 (2023.11.14-2-42)
   Opus               BSD-3-Clause       https://github.com/xiph/opus
                      commit 3da9f7a6db1c (v1.6.1-50)
-  piper-phonemize    MIT                https://github.com/rhasspy/piper-phonemize
-                     VERSION NOT RECORDED
-  fmt                MIT                https://github.com/fmtlib/fmt
-                     VERSION NOT RECORDED
-  spdlog             MIT                https://github.com/gabime/spdlog
-                     VERSION NOT RECORDED
-  ONNX Runtime       MIT                https://github.com/microsoft/onnxruntime
-                     prebuilt .so, ORT_API_VERSION 27; release not recorded
 
-The three marked NOT RECORDED were obtained without leaving a version behind --
-no tag, no commit, no manifest. They are all permissively licensed, so nothing
-turns on it legally, but a build cannot be reproduced exactly until they are
-pinned, and that is a known gap rather than an oversight nobody noticed.
+That is the only native dependency now. llama.cpp, whisper.cpp, Piper,
+piper-phonemize, espeak-ng, fmt, spdlog and ONNX Runtime were all linked here
+before the Gemini Nano migration and are listed in "History" below rather
+than hidden, since older commits and older released APKs still depend on
+them being recorded.
 
-The espeak-ng commit is the one that carries an obligation: GPL-3.0 requires
-the corresponding source of the linked library be available to anyone who
-receives the binary, and the commit above is what makes that identifiable.
+Pulled in as ordinary Gradle/Maven dependencies, not linked native code --
+covered by their own publishers' terms, not vendored or bundled source in
+this repository:
+
+  ML Kit GenAI (Prompt, Speech Recognition)   Google Play services module,
+                                               downloaded on-device; governed
+                                               by Google's own API terms, not
+                                               an OSS licence in this repo's
+                                               sense. See AiCoreAvailability.kt.
+  ML Kit Vision (Image Labeling, Face          Same as above -- Google-
+  Detection, Face Mesh Detection, Pose         published Android libraries,
+  Detection, Object Detection & Tracking,      not linked/bundled source.
+  Barcode Scanning, Text Recognition,
+  Selfie Segmentation), Play Services
+  Document Scanner
+  CameraX (androidx.camera)                   Apache-2.0, part of Android
+                                               Jetpack/AndroidX, same as the
+                                               rest of the platform libraries
+                                               this app already depended on
+                                               (Compose, Hilt, Room, etc.) and
+                                               were never itemised here either.
+
+No machine-learning model file is bundled or user-supplied any more. Gemini
+Nano is downloaded by Android itself, on-device, the first time it is needed.
 
 Used by the ESP32-S3 firmware:
 
@@ -92,6 +73,54 @@ Bundled fonts (full texts in licences/):
   Baloo 2            SIL OFL 1.1        licences/OFL-Baloo2.txt
   Quicksand          SIL OFL 1.1        licences/OFL-Quicksand.txt
 
-No machine-learning models are bundled. The language model, the Whisper
-speech-recognition model and the Piper voice are supplied by the user and
-carry their own licences.
+--------------------------------------------------------------------------
+History: why a released APK used to be GPL-3.0
+--------------------------------------------------------------------------
+
+Kept for anyone building from, or auditing, a commit before the Gemini Nano
+migration -- not a statement about the current build.
+
+The app's native library (`libdigitalpet-native.so`) used to link espeak-ng,
+licensed GPL-3.0-or-later, and the app bundled espeak-ng's phoneme data under
+`android/app/src/main/assets/espeak-ng-data/`. espeak-ng was used by Piper
+for text-to-phoneme conversion; the pet could not speak without it.
+
+Apache-2.0 is one-way compatible with the GPL: Apache-2.0 code may be
+combined into a GPL-3.0 work, and the result is GPL-3.0. Consequently any
+binary that linked espeak-ng -- including a released APK built from one of
+those commits -- had to be distributed under GPL-3.0, with the corresponding
+source and licence text made available to recipients.
+
+The obligation attached to linking, not to calling. Piper did provide a
+non-espeak phonemizer (`PhonemeType::TextPhonemes`), but choosing it changed
+nothing while espeak-ng remained in the link, and nearly every published
+Piper voice was an espeak-phoneme model.
+
+The ESP32-S3 firmware was never affected -- it never linked espeak-ng, and
+the audio it plays arrives over BLE already synthesised, then and now.
+
+Old third-party components, for the same commits:
+
+  espeak-ng          GPL-3.0-or-later   https://github.com/espeak-ng/espeak-ng
+                     commit fbe4b3764285 (1.52.0-292-gfbe4b376)
+                     licence text: licences/GPL-3.0.txt
+  llama.cpp          MIT                https://github.com/ggerganov/llama.cpp
+                     commit bec4772f6a25 (b9905-8)
+  whisper.cpp        MIT                https://github.com/ggerganov/whisper.cpp
+                     commit 6fc7c33b4c3a (v1.9.1-81)
+  Piper              MIT                https://github.com/rhasspy/piper
+                     commit 73c04d81d559 (2023.11.14-2-42)
+  piper-phonemize    MIT                https://github.com/rhasspy/piper-phonemize
+                     VERSION NOT RECORDED
+  fmt                MIT                https://github.com/fmtlib/fmt
+                     VERSION NOT RECORDED
+  spdlog             MIT                https://github.com/gabime/spdlog
+                     VERSION NOT RECORDED
+  ONNX Runtime       MIT                https://github.com/microsoft/onnxruntime
+                     prebuilt .so, ORT_API_VERSION 27; release not recorded
+
+Back then, the language model, the Whisper speech-recognition model and the
+Piper voice were all supplied by the user and carried their own licences --
+none were bundled.
+
+This is a statement of the licences involved, not legal advice.
