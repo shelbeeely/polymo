@@ -26,7 +26,18 @@ import com.digitalpet.ui.theme.PetSpacing
 
 import com.digitalpet.ui.theme.PetTextSize
 
-/** One file in a slot: what it is, load it, or delete it. */
+/**
+ * One file in a slot: what it is, load it, or delete it.
+ *
+ * **Currently uncalled, not dead.** It was [SlotCard]'s "other files" list
+ * for the old model-import screens; those files are gone (see
+ * [ModelSettingsScreen][com.digitalpet.ui.settings.ModelSettingsScreen]'s
+ * doc comment), but the design system still names `settings/AlternativeRow`
+ * in its component roster (`components.txt`, checked by `ComponentRosterTest`),
+ * and that roster is the design project's call to make, not this codebase's —
+ * see CLAUDE.md §7.2. Removing this file without the design system agreeing
+ * first would be exactly the drift the sync tests exist to catch.
+ */
 @Composable
 fun AlternativeRow(
     name: String,

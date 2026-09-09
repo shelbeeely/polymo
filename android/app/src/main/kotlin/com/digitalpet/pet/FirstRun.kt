@@ -45,6 +45,16 @@ enum class FirstRunStep(
     val optional: Boolean,
 ) {
     /**
+     * The one step with no fix inside this app. AICore/Gemini Nano is a
+     * hardware-gated eligibility check (Speech Recognition Advanced mode is
+     * Pixel 10/11 only as of this writing), not a file the user can go
+     * import — so unlike every other blocking step, there is nothing to send
+     * someone off to do. Checked first, before [WELCOME], so nobody spends
+     * time pairing a pet with a phone that was never going to run it.
+     */
+    DEVICE_UNSUPPORTED(optional = false),
+
+    /**
      * The one expectation the app cannot recover from being wrong about: there
      * is a physical pet, and this is its other half.
      */
@@ -110,6 +120,7 @@ object FirstRun {
      * fixed at its source in 2026-08-05.
      */
     fun isDone(step: FirstRunStep, state: FirstRunState): Boolean = when (step) {
+        FirstRunStep.DEVICE_UNSUPPORTED -> state.readiness !is PetReadiness.DeviceUnsupported
         FirstRunStep.WELCOME -> state.welcomeAcknowledged
         FirstRunStep.PET -> state.bluetoothGranted && state.petPaired
         FirstRunStep.MODELS -> state.readiness !is PetReadiness.Missing
@@ -145,6 +156,7 @@ object FirstRun {
      * design system's rule that separates a care app from a permissions form.
      */
     fun title(step: FirstRunStep): String = when (step) {
+        FirstRunStep.DEVICE_UNSUPPORTED -> "This phone can't run your pet."
         FirstRunStep.WELCOME -> "Your pet is a real thing."
         FirstRunStep.PET -> "Find your pet."
         FirstRunStep.MODELS -> "Give it a brain, ears and a voice."
@@ -164,6 +176,12 @@ object FirstRun {
      * sentence rather than a list.
      */
     fun body(step: FirstRunStep, state: FirstRunState): String = when (step) {
+        FirstRunStep.DEVICE_UNSUPPORTED ->
+            "Your pet thinks and listens through Gemini Nano, which runs on " +
+                "AICore — hardware that today means Pixel 10 or Pixel 11. This " +
+                "phone doesn't have it, and there's nothing to add or download " +
+                "that changes that. Come back on a supported phone."
+
         FirstRunStep.WELCOME ->
             "It lives on a little screen with its own speaker, and it goes on " +
                 "living whether or not this app is open. This app is its other " +
@@ -199,8 +217,13 @@ object FirstRun {
                 "is waiting so it can tell you what came in."
     }
 
-    /** The primary action's label. */
-    fun action(step: FirstRunStep): String = when (step) {
+    /**
+     * The primary action's label, or **null when there is none** —
+     * [FirstRunStep.DEVICE_UNSUPPORTED] only, since unlike every other
+     * blocking step there is nowhere inside this app to send someone.
+     */
+    fun action(step: FirstRunStep): String? = when (step) {
+        FirstRunStep.DEVICE_UNSUPPORTED -> null
         FirstRunStep.WELCOME -> "Set up my pet"
         FirstRunStep.PET -> "Pair a pet"
         FirstRunStep.MODELS -> "Add models"
@@ -221,6 +244,9 @@ object FirstRun {
      * miss the one thing the app cannot recover from them not knowing.
      */
     fun secondary(step: FirstRunStep): String? = when (step) {
+        // Same reasoning as WELCOME: nothing to decline, and there is no
+        // "later" for hardware the phone does not have.
+        FirstRunStep.DEVICE_UNSUPPORTED -> null
         FirstRunStep.WELCOME -> null
         FirstRunStep.PET, FirstRunStep.MODELS -> "I'll finish setting up later"
         FirstRunStep.SCREEN_TIME, FirstRunStep.NOTIFICATIONS -> "Not now"

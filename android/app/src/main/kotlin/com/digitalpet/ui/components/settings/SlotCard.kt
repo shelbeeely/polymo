@@ -38,17 +38,16 @@ import com.digitalpet.ui.theme.PetTextSize
 import com.digitalpet.ui.theme.PetTheme
 
 /**
- * One model slot: what is loaded, and — behind the pencil — what else there is.
+ * One faculty's status, and — behind the pencil — more about it.
  *
- * **Named by what it does, not by what it is**: Brain, Ears, Voice. The files
- * are `.gguf`, `.bin` and `.onnx`, and those names appear where they matter — on
- * [importLabel], so it is obvious which slot a downloaded file belongs to — but
- * a slot called "Whisper" tells you nothing about what breaks when it is empty.
- *
- * **Each slot owns its own import.** The panels this replaced had three import
- * buttons at three different scroll positions, all opening the same unfiltered
- * picker, so a loose `.gguf` could be handed to the voice slot and fail
- * somewhere far away.
+ * **Originally one card per model file** — Brain (`.gguf`), Ears
+ * (Whisper `.bin`), Voice (Piper `.onnx`+`.json`) — back when each was a
+ * file the user fetched and swapped. [ModelSettingsScreen][com.digitalpet.ui.settings.ModelSettingsScreen]
+ * now has exactly one caller, for AICore's Brain+Ears eligibility check:
+ * [importLabel]/[onImport] fetch a Gemini Nano *feature*, not a picked file,
+ * but the shape — a status line, an expandable "more about this" section,
+ * one fetch action — still fits that job precisely, which is why this
+ * component survived the swap rather than being replaced.
  *
  * **A card at rest says what is loaded and nothing else**, because that is the
  * only thing that matters when nothing is wrong.

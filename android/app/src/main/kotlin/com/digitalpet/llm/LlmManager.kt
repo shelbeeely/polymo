@@ -1,410 +1,193 @@
 package com.digitalpet.llm
 
-import android.content.Context
-import android.os.Environment
-import android.util.Log
+import com.digitalpet.pet.AiCoreAvailability
+import com.digitalpet.pet.AiCoreStatus
 import com.digitalpet.util.DiagnosticLogger
-import dagger.hilt.android.qualifiers.ApplicationContext
+import com.google.mlkit.genai.prompt.Generation
+import com.google.mlkit.genai.prompt.GenerativeModel
+import com.google.mlkit.genai.prompt.PromptPrefix
+import com.google.mlkit.genai.prompt.TextPart
+import com.google.mlkit.genai.prompt.generateContentRequest
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.io.File
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Central manager for on-device LLM inference.
+ * Central manager for on-device LLM inference — now Gemini Nano via the ML
+ * Kit GenAI Prompt API, not a loaded GGUF file.
  *
- * [LlmManager] owns the lifecycle of a single loaded GGUF model and its
- * inference context. It exposes a reactive [modelState] flow so the UI can
- * observe loading progress and errors, and provides a streaming [generate]
- * function that bridges the JNI token callback into a Kotlin [Flow].
- *
- * Thread-safety is guaranteed by a [Mutex] that serialises all native
- * pointer mutations (load / unload / hot-swap).
- *
- * Usage:
- * ```kotlin
- * llmManager.loadModel("/sdcard/Download/model.gguf")
- * llmManager.generate("Hello!").collect { token -> print(token) }
- * ```
+ * **There is no model to point at anymore.** The old [LlmManager] owned a
+ * `.gguf` path and a native `llama.cpp` context; this one owns a
+ * [GenerativeModel] handle to a system service, and [ModelState] just
+ * mirrors [AiCoreAvailability]'s device-eligibility answer plus whatever
+ * this class's own calls add on top (a warmup failure, a generation error).
+ * There is nothing here to hot-swap, delete, or scan the Downloads folder
+ * for — see [com.digitalpet.data.ModelRepository], which lost the matching
+ * amount of code.
  */
 @Singleton
 class LlmManager @Inject constructor(
-    private val personas: com.digitalpet.conversation.PetPersonaStore,
-    @ApplicationContext private val appContext: Context,
-    private val diagnosticLogger: DiagnosticLogger
+    private val aiCoreAvailability: AiCoreAvailability,
+    private val diagnosticLogger: DiagnosticLogger,
 ) {
 
-    companion object {
-        private const val TAG = "LlmManager"
-        private const val GGUF_EXTENSION = ".gguf"
+    private companion object {
+        const val TAG = "LlmManager"
+
+        /**
+         * The Prompt API's own stated ceiling ("Input must be under 4000
+         * tokens (or approximately 3000 English words)" — get-started.md).
+         * There is no tokenizer on this side of the call, so this is a rough
+         * chars-per-token estimate purely to log a warning before a call that
+         * would otherwise just fail remotely with no earlier signal.
+         */
+        const val APPROX_CHARS_PER_TOKEN = 4
+        const val TOKEN_CEILING = 4000
     }
 
-    // ── Model state machine ──────────────────────────────────────────────
-
-    /**
-     * Sealed interface representing the current state of the LLM model lifecycle.
-     */
     sealed interface ModelState {
-        /** No model is loaded. */
+        /** Not yet asked. Transient — [AiCoreAvailability] answers within one collect. */
         data object Unloaded : ModelState
 
-        /** A model is currently being loaded. */
-        data class Loading(val progress: Float) : ModelState
+        /** Mirrors [AiCoreStatus.Checking]. */
+        data object CheckingAvailability : ModelState
 
-        /** A model is loaded and ready for inference. */
-        data class Ready(val info: ModelInfo) : ModelState
+        /**
+         * Mirrors [AiCoreStatus.Downloadable]/[AiCoreStatus.Downloading].
+         * `progress` is `-1f` while the underlying status only says
+         * "downloading" without a fraction — the settings screen shows an
+         * indeterminate spinner rather than inventing a percentage.
+         */
+        data class Downloading(val progress: Float) : ModelState
 
-        /** An error occurred during model loading or inference. */
+        /** Warmed up and ready for [generate]. */
+        data object Ready : ModelState
+
+        /**
+         * Either [AiCoreStatus.Unsupported] (though that case is expected to
+         * be caught earlier by [com.digitalpet.pet.PetReadiness.DeviceUnsupported]
+         * — this exists for defence in depth) or a real generation-time
+         * failure. Carries whatever the SDK said, verbatim, same rule as the
+         * old native loader errors this replaces.
+         */
         data class Error(val message: String) : ModelState
     }
 
-    private val _modelState = MutableStateFlow<ModelState>(ModelState.Unloaded)
+    private val generativeModel: GenerativeModel by lazy { Generation.getClient() }
 
-    /** Observable state of the currently loaded model. */
+    private val _modelState = MutableStateFlow<ModelState>(ModelState.Unloaded)
     val modelState: StateFlow<ModelState> = _modelState.asStateFlow()
 
-    // ── Native pointers (guarded by [nativeMutex]) ───────────────────────
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private var modelPtr: Long = 0L
-    private var contextPtr: Long = 0L
-    private val nativeMutex = Mutex()
-
-    // ── Public API ───────────────────────────────────────────────────────
-
-    /**
-     * Load a GGUF model from disk and create an inference context.
-     *
-     * This suspending function runs the heavy native work on [Dispatchers.Default]
-     * and updates [modelState] throughout the process. If a model is already
-     * loaded it will be unloaded first.
-     *
-     * @param path     absolute path to the `.gguf` model file.
-     * @param nCtx     context window size in tokens (default 2048).
-     * @param nThreads number of CPU threads for inference (default 4).
-     * @throws IllegalStateException if the native model or context allocation fails.
-     */
-    suspend fun loadModel(
-        path: String,
-        nCtx: Int = 2048,
-        nThreads: Int = 4
-    ) = withContext(Dispatchers.Default) {
-        val startTime = System.nanoTime()
-        diagnosticLogger.log(TAG, "loadModel started — path=$path, nCtx=$nCtx, nThreads=$nThreads")
-
-        nativeMutex.withLock {
-            try {
-                // Unload any existing model first.
-                releaseNativeResourcesLocked()
-
-                _modelState.value = ModelState.Loading(progress = 0.0f)
-
-                // Initialise the backend (idempotent in llama.cpp).
-                LlamaNative.initBackend()
-                _modelState.value = ModelState.Loading(progress = 0.1f)
-
-                // Load model.
-                val mPtr = LlamaNative.loadModel(path)
-                if (mPtr == 0L) {
-                    val msg = "Native loadModel returned null pointer for $path"
-                    diagnosticLogger.log(TAG, msg)
-                    _modelState.value = ModelState.Error(msg)
-                    return@withContext
+    init {
+        // Reactive, not polled: AiCoreAvailability is the one place that
+        // calls checkStatus()/download() — this just mirrors its answer, the
+        // same relationship ModelRepository used to have with the native
+        // loaders except there is now exactly one upstream truth instead of
+        // three independent files.
+        scope.launch {
+            aiCoreAvailability.status.collect { status ->
+                _modelState.value = when (status) {
+                    is AiCoreStatus.Checking -> ModelState.CheckingAvailability
+                    is AiCoreStatus.Downloadable -> ModelState.Downloading(progress = 0f)
+                    is AiCoreStatus.Downloading -> ModelState.Downloading(progress = -1f)
+                    is AiCoreStatus.Unsupported ->
+                        ModelState.Error("This device cannot run Gemini Nano")
+                    is AiCoreStatus.Available -> {
+                        warmup()
+                        ModelState.Ready
+                    }
                 }
-                modelPtr = mPtr
-                _modelState.value = ModelState.Loading(progress = 0.5f)
-
-                // Create inference context.
-                val cPtr = LlamaNative.createContext(modelPtr, nCtx, nThreads)
-                if (cPtr == 0L) {
-                    LlamaNative.freeModel(modelPtr)
-                    modelPtr = 0L
-                    val msg = "Native createContext failed (nCtx=$nCtx, nThreads=$nThreads)"
-                    diagnosticLogger.log(TAG, msg)
-                    _modelState.value = ModelState.Error(msg)
-                    return@withContext
-                }
-                contextPtr = cPtr
-                _modelState.value = ModelState.Loading(progress = 0.9f)
-
-                /*
-                 * Warm the cache with the prompt WE ACTUALLY SEND.
-                 *
-                 * This primed DEFAULT_PET_SYSTEM_PROMPT while the engine had
-                 * moved to the chosen persona's, so the two diverged nine
-                 * tokens in — inside the first sentence. llama.cpp then threw
-                 * away 135 cached tokens and re-prefilled 203 on EVERY message,
-                 * which measured at 23 seconds a turn.
-                 *
-                 * The whole point of a warmup is that the prefix matches. One
-                 * that primes a different string is worse than none: it costs
-                 * the load-time prefill and buys nothing.
-                 */
-                try {
-                    LlamaNative.warmup(
-                        contextPtr,
-                        modelPtr,
-                        personas.active.value.systemPrompt,
-                    )
-                } catch (e: Exception) {
-                    Log.w(TAG, "Warmup failed", e)
-                }
-                _modelState.value = ModelState.Loading(progress = 0.95f)
-
-                // Parse model info.
-                val info = parseModelInfo(path)
-                _modelState.value = ModelState.Ready(info)
-
-                val elapsedMs = (System.nanoTime() - startTime) / 1_000_000
-                diagnosticLogger.log(TAG, "loadModel completed in ${elapsedMs}ms — ${info.fileName}")
-            } catch (e: Exception) {
-                Log.e(TAG, "loadModel failed", e)
-                diagnosticLogger.log(TAG, "loadModel error: ${e.message}")
-                releaseNativeResourcesLocked()
-                _modelState.value = ModelState.Error(e.message ?: "Unknown error")
             }
         }
     }
 
     /**
-     * Stream generated tokens from the loaded model.
+     * Loads Gemini Nano into memory ahead of the first real call.
      *
-     * Each emitted [String] is a single token (or token fragment) produced
-     * by the native inference engine. The flow completes when the model
-     * emits an end-of-sequence token or [maxTokens] is reached.
+     * **Not the old `warmup()`.** `LlamaNative.warmup()` prefilled the KV
+     * cache with one specific system prompt, and getting that prompt wrong
+     * cost 23 seconds a turn (see the git history on the file this replaced).
+     * The Prompt API's `warmup()` has no such trap — it loads the model
+     * generically, not a prefix. The prefix itself is [generate]'s job now,
+     * via [PromptPrefix] — see that function's doc comment.
+     */
+    private suspend fun warmup() {
+        try {
+            generativeModel.warmup()
+        } catch (e: Exception) {
+            // Non-fatal: generateContentStream() below still works without a
+            // successful warmup, just slower on the first call.
+            diagnosticLogger.log(TAG, "warmup failed (non-fatal): ${e.message}")
+        }
+    }
+
+    /**
+     * Stream generated text from Gemini Nano.
      *
-     * @param prompt       the user-facing prompt text.
-     * @param systemPrompt the system instruction prepended to the conversation.
-     * @param maxTokens    maximum tokens to generate (default 512).
-     * @param temperature  sampling temperature (default 0.7).
-     * @param topP         nucleus-sampling probability mass (default 0.9).
-     * @return a cold [Flow] of token strings.
-     * @throws IllegalStateException if no model is currently loaded.
+     * @param prompt       the user's message, plain text — **not** a ChatML
+     *   string. There is no template to build any more.
+     * @param systemPrompt the persona + the three appended pet rules + the
+     *   condition clause, concatenated — see
+     *   [com.digitalpet.llm.SystemPromptManager.buildSystemInstruction].
+     *   Passed as a [PromptPrefix], **not** as a system-instruction field —
+     *   this shipped version of the Prompt API (`1.0.0-beta2`, decompiled to
+     *   check) has no such field at all; an earlier draft of this file
+     *   assumed one existed from prose docs describing a newer surface. A
+     *   prefix is in fact the better fit anyway: this text is genuinely
+     *   stable across most turns (only the condition clause moves, and only
+     *   when the pet's scores change), which is exactly what prefix caching
+     *   is for — real measured gains in Google's own docs (0.82s → 0.45s for
+     *   a 300-token prefix on a Pixel 9).
+     * @param topP unused — the Prompt API's optional parameters are
+     *   `temperature`, `seed`, `topK`, `candidateCount` and `maxOutputTokens`;
+     *   there is no topP-equivalent knob to forward this to, confirmed
+     *   against the real `GenerateContentRequest.Builder`. Kept in the
+     *   signature only so this is not a breaking change for callers that
+     *   still pass it.
      */
     fun generate(
         prompt: String,
         systemPrompt: String,
         maxTokens: Int = 512,
         temperature: Float = 0.7f,
-        topP: Float = 0.9f
-    ): Flow<String> = callbackFlow {
-        val startTime = System.nanoTime()
+        @Suppress("UNUSED_PARAMETER") topP: Float = 0.9f,
+    ): Flow<String> {
+        val approxTokens = (systemPrompt.length + prompt.length) / APPROX_CHARS_PER_TOKEN
+        if (approxTokens > TOKEN_CEILING) {
+            diagnosticLogger.log(
+                TAG,
+                "generate — approx $approxTokens tokens exceeds the Prompt API's " +
+                    "$TOKEN_CEILING-token ceiling; this call will likely fail remotely"
+            )
+        }
+
+        val request = generateContentRequest(TextPart(prompt)) {
+            this.promptPrefix = PromptPrefix(systemPrompt)
+            this.temperature = temperature
+            this.maxOutputTokens = maxTokens
+        }
+
         diagnosticLogger.log(TAG, "generate started — maxTokens=$maxTokens, temp=$temperature")
 
-        val currentModelPtr: Long
-        val currentCtxPtr: Long
-
-        // Snapshot pointers under the mutex; generation itself runs without
-        // holding the lock so that hot-swap can proceed concurrently.
-        nativeMutex.withLock {
-            check(modelPtr != 0L && contextPtr != 0L) {
-                "No model loaded — call loadModel() first"
+        return generativeModel.generateContentStream(request)
+            .map { chunk -> chunk.candidates.firstOrNull()?.text.orEmpty() }
+            .catch { e ->
+                diagnosticLogger.log(TAG, "generate error: ${e.message}")
+                _modelState.value = ModelState.Error(e.message ?: "Unknown error")
+                throw e
             }
-            currentModelPtr = modelPtr
-            currentCtxPtr = contextPtr
-        }
-
-        try {
-            LlamaNative.generate(
-                ctxPtr = currentCtxPtr,
-                modelPtr = currentModelPtr,
-                prompt = prompt,
-                systemPrompt = systemPrompt,
-                maxTokens = maxTokens,
-                temperature = temperature,
-                topP = topP
-            ) { token ->
-                val result = trySend(token)
-                if (result.isClosed) {
-                    throw kotlinx.coroutines.CancellationException("Flow closed or cancelled")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "generate error", e)
-            diagnosticLogger.log(TAG, "generate error: ${e.message}")
-            close(e)
-        }
-
-        val elapsedMs = (System.nanoTime() - startTime) / 1_000_000
-        diagnosticLogger.log(TAG, "generate completed in ${elapsedMs}ms")
-
-        // Log performance metrics if available.
-        try {
-            val metrics = LlamaNative.getPerformanceMetrics(currentCtxPtr)
-            if (metrics.isNotEmpty()) {
-                diagnosticLogger.log(
-                    TAG,
-                    "perf — eval=${metrics[0]} t/s, prompt=${metrics.getOrElse(1) { 0f }} t/s, " +
-                        "total=${metrics.getOrElse(2) { 0f }}ms"
-                )
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not retrieve performance metrics", e)
-        }
-
-        close()
-
-        awaitClose {
-            diagnosticLogger.log(TAG, "generate flow closed")
-        }
-    }.flowOn(Dispatchers.Default)
-
-    /**
-     * Replace the currently loaded model with a new one without fully
-     * tearing down the backend.
-     *
-     * This is faster than a full [unloadModel] + [loadModel] cycle when
-     * switching between models of the same architecture.
-     *
-     * @param newPath absolute path to the new `.gguf` model file.
-     */
-    suspend fun hotSwapModel(newPath: String) {
-        val startTime = System.nanoTime()
-        diagnosticLogger.log(TAG, "hotSwapModel started — newPath=$newPath")
-
-        nativeMutex.withLock {
-            releaseNativeResourcesLocked()
-        }
-
-        // Reload with default parameters.
-        loadModel(newPath)
-
-        val elapsedMs = (System.nanoTime() - startTime) / 1_000_000
-        diagnosticLogger.log(TAG, "hotSwapModel completed in ${elapsedMs}ms")
-    }
-
-    /**
-     * Unload the current model and free all native resources.
-     *
-     * [modelState] transitions to [ModelState.Unloaded] upon completion.
-     */
-    suspend fun unloadModel() {
-        val startTime = System.nanoTime()
-        diagnosticLogger.log(TAG, "unloadModel started")
-
-        nativeMutex.withLock {
-            releaseNativeResourcesLocked()
-            _modelState.value = ModelState.Unloaded
-        }
-
-        val elapsedMs = (System.nanoTime() - startTime) / 1_000_000
-        diagnosticLogger.log(TAG, "unloadModel completed in ${elapsedMs}ms")
-    }
-
-    /**
-     * Scan the device for available GGUF model files.
-     *
-     * Searches the public Downloads directory and the app's external files
-     * directory for files ending in `.gguf`.
-     *
-     * @param context Android context used to resolve external file paths.
-     * @return a list of [ModelInfo] descriptors for every discovered model.
-     */
-    fun getAvailableModels(context: Context): List<ModelInfo> {
-        diagnosticLogger.log(TAG, "getAvailableModels — scanning device storage")
-
-        val models = mutableListOf<ModelInfo>()
-        val searchDirs = listOfNotNull(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            context.getExternalFilesDir(null)
-        )
-
-        for (dir in searchDirs) {
-            if (!dir.exists() || !dir.isDirectory) continue
-            dir.listFiles { file -> file.extension.equals("gguf", ignoreCase = true) }
-                ?.forEach { file ->
-                    try {
-                        models.add(parseModelInfo(file.absolutePath))
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Skipping unreadable model: ${file.name}", e)
-                    }
-                }
-        }
-
-        diagnosticLogger.log(TAG, "getAvailableModels found ${models.size} model(s)")
-        return models
-    }
-
-    // ── Private helpers ──────────────────────────────────────────────────
-
-    /**
-     * Release native context and model pointers.
-     * **Must be called while holding [nativeMutex].**
-     */
-    private fun releaseNativeResourcesLocked() {
-        if (contextPtr != 0L) {
-            LlamaNative.freeContext(contextPtr)
-            contextPtr = 0L
-        }
-        if (modelPtr != 0L) {
-            LlamaNative.freeModel(modelPtr)
-            modelPtr = 0L
-        }
-    }
-
-    /**
-     * Build a [ModelInfo] by querying native metadata and file properties.
-     */
-    private fun parseModelInfo(path: String): ModelInfo {
-        val file = File(path)
-        return try {
-            val jsonStr = LlamaNative.getModelInfo(path)
-            val json = JSONObject(jsonStr)
-            ModelInfo(
-                path = path,
-                fileName = file.name,
-                /*
-                 * "param_count" — the key the JNI actually emits. This read
-                 * "parameter_count" and optString returned its default silently,
-                 * so EVERY model has reported an unknown parameter count since
-                 * this was written, and nothing anywhere said so. It only became
-                 * visible when a screen started printing the field.
-                 */
-                parameterCount = json.optString("param_count", "unknown"),
-                quantization = json.optString("quantization", "unknown"),
-                architecture = json.optString("architecture", "unknown"),
-                fileSizeBytes = file.length()
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not parse model info for ${file.name}, using defaults", e)
-            // Attempt to infer from filename.
-            val name = file.nameWithoutExtension.lowercase()
-            ModelInfo(
-                path = path,
-                fileName = file.name,
-                parameterCount = inferParameterCount(name),
-                quantization = inferQuantization(name),
-                architecture = "unknown",
-                fileSizeBytes = file.length()
-            )
-        }
-    }
-
-    /**
-     * Best-effort extraction of parameter count from a model filename.
-     * E.g. "tinyllama-1.1b-q4_k_m" → "1.1B"
-     */
-    private fun inferParameterCount(name: String): String {
-        val match = Regex("""(\d+\.?\d*)\s*[bB]""").find(name)
-        return match?.groupValues?.get(1)?.let { "${it}B" } ?: "unknown"
-    }
-
-    /**
-     * Best-effort extraction of quantisation label from a model filename.
-     * E.g. "tinyllama-1.1b-q4_k_m" → "Q4_K_M"
-     */
-    private fun inferQuantization(name: String): String {
-        val match = Regex("""(q\d+[_a-z0-9]*)""", RegexOption.IGNORE_CASE).find(name)
-        return match?.value?.uppercase() ?: "unknown"
+            .flowOn(Dispatchers.Default)
     }
 }

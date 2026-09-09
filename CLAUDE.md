@@ -6,9 +6,22 @@ symbols are deliberately unchanged: renaming the package would be a different
 install, losing models, pairing and transcript.
 
 A physical digital pet: an **ESP32-S3 Waveshare Touch-AMOLED-1.8** board running
-LVGL, paired over BLE to an **Android app** that does all the thinking on-device
-(Whisper → llama.cpp → Piper). You tap the pet, speak at the pet, and the pet
-answers out of its own speaker. The phone is compute; it is not a participant.
+LVGL, paired over BLE to an **Android app** that does all the thinking on-device.
+You tap the pet, speak at the pet, and the pet answers out of its own speaker.
+The phone is compute; it is not a participant.
+
+**AICore-exclusive as of the Gemini Nano migration.** The LLM (ML Kit GenAI
+Prompt API) and STT (ML Kit GenAI Speech Recognition, Advanced mode) are both
+Gemini Nano via AICore now, not llama.cpp and Whisper.cpp — see
+`AiCoreAvailability.kt`. This is a **hard gate, not a soft degrade**: a device
+that fails the AICore eligibility check is stopped at
+`PetReadiness.DeviceUnsupported`/`FirstRunStep.DEVICE_UNSUPPORTED` before it
+ever reaches the conversation flow, with no fallback path. TTS is
+`android.speech.tts.TextToSpeech`, the platform engine — not AICore, since
+Gemini Nano has no speech-synthesis capability at all; it was the user's
+explicit choice over building a second on-device engine. None of the three
+faculties involve a user-imported model file any more (no `.gguf`, no Whisper
+`.bin`, no Piper `.onnx`+`.json`) — see `ModelRepository.kt`'s doc comment.
 
 ## Read these first
 
@@ -20,7 +33,7 @@ answers out of its own speaker. The phone is compute; it is not a participant.
 
 ```
 pet-esp32/      ESP-IDF firmware for the current pet — the display, mic and speaker
-android/        the app: BLE, Whisper, llama.cpp, Piper, and the conversation engine
+android/        the app: BLE, Gemini Nano (AICore), platform TTS, and the conversation engine
 design-system/  vendored copy of the Claude Design files — the sync tests read
                 it. tokens/, strings.txt, components.txt, plus faces/ (what the
                 pet LOOKS like) and personas/ (what it SAYS). Code is GENERATED
@@ -76,6 +89,18 @@ files changed, which is the one case the sync tests exist for.
 - **Verify on hardware, not by building.** Nearly every hard bug in this project
   looked fine in a build and wrong on the board. Record the measurement, not
   just the fix.
+  **Scoped exception during the Gemini Nano migration**: development runs
+  against an Android emulator and a Wokwi-simulated ESP32 first, with
+  physical-hardware verification as a deliberate, separately-announced later
+  phase — not a rewrite of the rule above, which still holds generally. One
+  real limit worth knowing: AICore is hardware-gated, so
+  `Generation.getClient().checkStatus()` and Speech Recognition Advanced
+  mode's `checkStatus()` genuinely report `UNAVAILABLE` on an emulator — that
+  makes the emulator a real, not simulated, check of the hard-block path
+  (`DeviceUnsupported`/`FirstRunStep.DEVICE_UNSUPPORTED`), but it cannot prove
+  anything about actual Gemini Nano behaviour (persona quality, latency,
+  transcription accuracy). Those stay unverified until a physical Pixel
+  10/11 pass happens.
 - **Commit messages carry the *why*.** They are long here on purpose and are a
   primary record. Write them with `git commit -F <file>` — backticks in
   `-m "…"` get executed by the shell and silently delete text.

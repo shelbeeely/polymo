@@ -200,39 +200,44 @@ fun FirstRunScreen(
 
         Spacer(Modifier.weight(1f))
 
-        PetButton(
-            onClick = {
-                when (step) {
-                    FirstRunStep.WELCOME -> welcomeAcknowledged = true
-                    FirstRunStep.PET -> {
-                        // The permission first, then the place that uses it. If
-                        // it is already granted the launcher returns at once and
-                        // the trip to pairing is the only thing anyone sees.
-                        permissions.launch(bluetoothPermissions())
-                        onOpenPetSettings()
-                    }
-                    FirstRunStep.MODELS -> onOpenModelSettings()
-                    FirstRunStep.SCREEN_TIME -> onOpenScreenTimeSettings()
-                    FirstRunStep.NOTIFICATIONS -> {
-                        /*
-                         * TWO SEPARATE GRANTS, and only one of them is a
-                         * permission. POST_NOTIFICATIONS is a runtime
-                         * permission; reading what is waiting is a listener
-                         * binding granted in a system settings screen, and
-                         * there is no API to ask for it in a dialog.
-                         */
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            permissions.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+        // Absent only on DEVICE_UNSUPPORTED — the one step with nowhere in
+        // this app to send someone, so there is no primary action to draw.
+        FirstRun.action(step)?.let { label ->
+            PetButton(
+                onClick = {
+                    when (step) {
+                        FirstRunStep.DEVICE_UNSUPPORTED -> Unit
+                        FirstRunStep.WELCOME -> welcomeAcknowledged = true
+                        FirstRunStep.PET -> {
+                            // The permission first, then the place that uses it. If
+                            // it is already granted the launcher returns at once and
+                            // the trip to pairing is the only thing anyone sees.
+                            permissions.launch(bluetoothPermissions())
+                            onOpenPetSettings()
                         }
-                        settingsTrip.launch(
-                            Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                        )
+                        FirstRunStep.MODELS -> onOpenModelSettings()
+                        FirstRunStep.SCREEN_TIME -> onOpenScreenTimeSettings()
+                        FirstRunStep.NOTIFICATIONS -> {
+                            /*
+                             * TWO SEPARATE GRANTS, and only one of them is a
+                             * permission. POST_NOTIFICATIONS is a runtime
+                             * permission; reading what is waiting is a listener
+                             * binding granted in a system settings screen, and
+                             * there is no API to ask for it in a dialog.
+                             */
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                permissions.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                            }
+                            settingsTrip.launch(
+                                Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                            )
+                        }
                     }
-                }
-            },
-            modifier = Modifier.fillMaxWidth().height(PetSize.touchMin),
-        ) {
-            Text(FirstRun.action(step), fontWeight = FontWeight.Bold, fontSize = PetTextSize.t13)
+                },
+                modifier = Modifier.fillMaxWidth().height(PetSize.touchMin),
+            ) {
+                Text(label, fontWeight = FontWeight.Bold, fontSize = PetTextSize.t13)
+            }
         }
 
         /*

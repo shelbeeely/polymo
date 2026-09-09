@@ -10,7 +10,9 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * [Resampler] converts Piper's 22050 Hz output to the 16 kHz the pet decodes.
+ * [Resampler] converts the TTS engine's output rate (commonly 22050 or
+ * 24000 Hz — Piper's was fixed at 22050, the platform engine's varies by
+ * voice) to the 16 kHz the pet decodes.
  *
  * Worth testing because it is pure arithmetic sitting in the audio path where
  * mistakes are inaudible individually and ruinous in aggregate: a wrong length

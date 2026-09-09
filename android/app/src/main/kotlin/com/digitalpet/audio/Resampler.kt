@@ -9,17 +9,21 @@ import kotlin.math.sin
 /**
  * Sample-rate conversion for the pet's speaker link.
  *
- * Piper synthesises at 22050 Hz, which Opus does not accept — it takes only
- * 8/12/16/24/48 kHz. The pet's microphone path is already 16 kHz end to end,
- * so TTS is converted *down* to 16 kHz rather than up to 24 kHz: speech band is
- * plenty for a speaker this size, it costs a third less airtime, and it leaves
- * exactly one audio format in the system, which is the property that made the
+ * The TTS engine synthesises at whatever rate its active voice uses (Piper
+ * was fixed at 22050 Hz; the platform engine's varies, commonly 22050 or
+ * 24000 Hz), none of which Opus accepts — it takes only 8/12/16/24/48 kHz.
+ * The pet's microphone path is already 16 kHz end to end, so TTS is
+ * converted *down* to 16 kHz rather than up: speech band is plenty for a
+ * speaker this size, it costs a third less airtime, and it leaves exactly
+ * one audio format in the system, which is the property that made the
  * uplink easy to reason about.
  *
- * Downsampling needs a low-pass first. Piper's output carries energy up to
- * 11 kHz, and anything above 8 kHz would fold back into the speech band as
- * aliasing — audible as a metallic edge on sibilants, and exactly the kind of
- * damage a listener blames on the codec.
+ * Downsampling needs a low-pass first. Piper's output was measured carrying
+ * energy up to 11 kHz — the platform engine's has not been measured the same
+ * way, but any voice resampled from a rate this much higher than 16 kHz
+ * carries energy well above 8 kHz — and anything above 8 kHz would fold back
+ * into the speech band as aliasing: audible as a metallic edge on sibilants,
+ * and exactly the kind of damage a listener blames on the codec.
  */
 object Resampler {
 
@@ -97,9 +101,11 @@ object Resampler {
         // Normalise to unity gain at DC, so the filter cannot change loudness.
         for (i in taps.indices) taps[i] /= sum
 
-        // Filter into doubles first. Piper's output already peaks near full
-        // scale, and a windowed-sinc overshoots on transients, so rounding
-        // straight to Int16 would hard-clip — silently, and audibly.
+        // Filter into doubles first. TTS output commonly peaks near full
+        // scale (measured true of Piper's; not re-measured for the platform
+        // engine, but not a bet worth losing), and a windowed-sinc overshoots
+        // on transients, so rounding straight to Int16 would hard-clip —
+        // silently, and audibly.
         val wide = DoubleArray(pcm.size)
         var peak = 0.0
         for (i in pcm.indices) {

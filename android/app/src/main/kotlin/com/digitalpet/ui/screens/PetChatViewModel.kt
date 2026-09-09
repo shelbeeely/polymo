@@ -141,25 +141,21 @@ class PetChatViewModel @Inject constructor(
     }
 
 
-    // Which models are installed and active is owned by ModelRepository — it
-    // outlives this screen. Re-exposed here so the debug panels keep a single
-    // ViewModel to talk to.
+    // Readiness of the three faculties is owned by ModelRepository — it
+    // outlives this screen. Re-exposed here so the settings/status screen and
+    // the record-button gate keep a single ViewModel to talk to.
     val modelState = models.llmState
     val isTtsReady = models.isTtsReady
-    val ttsModelName = models.ttsModelName
-    val sttModelName = models.sttModelName
+    val isSttReady = models.isSttReady
+    val aiCoreStatus = models.aiCoreStatus
 
-    /**
-     * Why the Whisper model would not load, verbatim from the native side.
-     *
-     * Exposed because the Ears card could not see it, and so reported a
-     * REJECTED model as loaded: `loadSttModel` sets the name in its catch as
-     * well as its success path, and the card's badge keyed off the name alone.
-     * `PetReadiness` has always read this and called it Failed, so the two
-     * surfaces disagreed — and the models screen, the one you go to in order to
-     * fix it, was the one that lied.
-     */
-    val sttError = models.sttError
+    fun refreshAiCoreStatus() {
+        viewModelScope.launch { models.refreshAiCoreStatus() }
+    }
+
+    fun retryTts() {
+        viewModelScope.launch { models.retryTts() }
+    }
 
     /**
      * Whether the pet can answer at all — DESIGN.md §2.1's Axis C.
@@ -186,87 +182,18 @@ class PetChatViewModel @Inject constructor(
         combine(_isTranscribing, petVoice.isTranscribing) { phone, pet -> phone || pet }
             .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    // --- model management. All of it lives in ModelRepository; these are the
-    // bindings the settings panels call. `onComplete` lets a panel re-read its
-    // list once the file operation has actually landed. ---
-
-    fun getAvailableModels() = models.availableLlmModels()
-
-    fun loadModel(path: String) {
-        viewModelScope.launch { models.loadLlm(path) }
-    }
-
-    fun importModelFromUri(uri: android.net.Uri, onComplete: () -> Unit) {
-        viewModelScope.launch {
-            models.importLlm(uri)
-            onComplete()
-        }
-    }
-
-    fun deleteModel(path: String, onComplete: () -> Unit) {
-        viewModelScope.launch {
-            models.deleteLlm(path)
-            onComplete()
-        }
-    }
-
-    fun getAvailableTtsModels() = models.availableTtsVoices()
-
-    fun loadTtsModel(modelPath: String, configPath: String) {
-        viewModelScope.launch { models.loadTtsVoice(modelPath, configPath) }
-    }
-
-    /**
-     * A voice is picked as `.onnx` + `.onnx.json`; **either half alone is valid
-     * input** and the result says which half is still missing, so the screen
-     * can name it instead of reopening the file picker in silence.
-     */
-    fun importTtsModel(
-        uris: List<android.net.Uri>,
-        onComplete: (com.digitalpet.data.VoiceImport.Result) -> Unit,
-    ) {
-        viewModelScope.launch { onComplete(models.importTtsVoice(uris)) }
-    }
-
-    fun deleteTtsModel(modelPath: String, configPath: String, onComplete: () -> Unit) {
-        viewModelScope.launch {
-            models.deleteTtsVoice(modelPath, configPath)
-            onComplete()
-        }
-    }
-
-    fun getAvailableSttModels() = models.availableSttModels()
-
-    fun loadSttModel(path: String) {
-        viewModelScope.launch { models.loadSttModel(path) }
-    }
-
-    fun importSttModel(uri: android.net.Uri, onComplete: () -> Unit) {
-        viewModelScope.launch {
-            models.importSttModel(uri)
-            onComplete()
-        }
-    }
-
-    fun deleteSttModel(path: String, onComplete: () -> Unit) {
-        viewModelScope.launch {
-            models.deleteSttModel(path)
-            onComplete()
-        }
-    }
-
     /**
      * Start capturing speech — from the pet if one is connected and has a mic,
      * otherwise from the phone.
      *
      * Routing here rather than in the UI keeps one mic button: talking *to* the
      * pet is the point of the hardware, and the phone is the fallback for when
-     * it is not around. Either way Whisper does the transcription, so the STT
-     * model is required for both.
+     * it is not around. Either way Speech Recognition does the transcription,
+     * so AICore availability is required for both — see [isSttReady].
      */
     fun startRecording() {
-        if (sttModelName.value == null) {
-            logger.log("PetChatViewModel", "Cannot record: no STT model loaded")
+        if (!isSttReady.value) {
+            logger.log("PetChatViewModel", "Cannot record: AICore/Speech Recognition not ready")
             return
         }
 

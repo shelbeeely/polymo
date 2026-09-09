@@ -17,20 +17,16 @@ import org.junit.Test
  */
 class PetReadinessTest {
 
-    private val ready = LlmManager.ModelState.Ready(
-        com.digitalpet.llm.ModelInfo(
-            path = "/x", fileName = "llama.gguf", parameterCount = "1B",
-            quantization = "Q4_K_M", architecture = "llama", fileSizeBytes = 1L
-        )
-    )
+    private val ready = LlmManager.ModelState.Ready
     private val unloaded = LlmManager.ModelState.Unloaded
 
     private fun of(
+        aiCore: AiCoreStatus = AiCoreStatus.Available,
         llm: LlmManager.ModelState = ready,
         tts: Boolean = true,
         stt: String? = "ggml-tiny.en.bin",
         sttError: String? = null,
-    ) = PetReadiness.of(llm, tts, stt, sttError)
+    ) = PetReadiness.of(aiCore, llm, tts, stt, sttError)
 
     // ---- the one that matters ----------------------------------------------
 
@@ -73,6 +69,7 @@ class PetReadinessTest {
         // A failure needs a decision; missing files need a file manager. The
         // thing the user can act on first wins.
         val r = PetReadiness.of(
+            AiCoreStatus.Available,
             LlmManager.ModelState.Error("bad magic"), ttsReady = false, sttModelName = null
         )
         assertEquals(PetReadiness.Failed(PetFaculty.BRAIN, "bad magic"), r)
@@ -81,9 +78,45 @@ class PetReadinessTest {
     @Test
     fun `loading outranks missing, because it resolves itself`() {
         val r = PetReadiness.of(
-            LlmManager.ModelState.Loading(0.5f), ttsReady = false, sttModelName = null
+            AiCoreStatus.Available,
+            LlmManager.ModelState.Downloading(0.5f), ttsReady = false, sttModelName = null
         )
         assertEquals(PetReadiness.Loading(PetFaculty.BRAIN), r)
+    }
+
+    // ---- device eligibility, checked before anything else ------------------
+
+    @Test
+    fun `an unsupported device outranks every other state`() {
+        // Not fixable by importing a file, unlike Missing — so it has to win
+        // even against a failure or a loaded brain, or the app would offer an
+        // action ("Add a .gguf") that cannot possibly help.
+        assertEquals(
+            PetReadiness.DeviceUnsupported,
+            of(aiCore = AiCoreStatus.Unsupported, llm = LlmManager.ModelState.Error("boom"))
+        )
+        assertEquals(
+            PetReadiness.DeviceUnsupported,
+            of(aiCore = AiCoreStatus.Unsupported, stt = null, tts = false)
+        )
+    }
+
+    @Test
+    fun `checking or downloading AICore reads as loading, not missing`() {
+        // A device on its way to Available should not flash "no models yet" —
+        // that copy is for a fresh install with nothing set up, not a Pixel
+        // that is mid-download.
+        assertEquals(PetReadiness.Loading(PetFaculty.BRAIN), of(aiCore = AiCoreStatus.Checking))
+        assertEquals(PetReadiness.Loading(PetFaculty.BRAIN), of(aiCore = AiCoreStatus.Downloading))
+    }
+
+    @Test
+    fun `an unsupported device has a headline but no action`() {
+        // Unlike Missing, there is nothing in this app that fixes it — no
+        // "Add a model in Settings" makes sense for hardware the phone lacks.
+        assertNotNull(PetReadiness.headline(PetReadiness.DeviceUnsupported))
+        assertNull(PetReadiness.action(PetReadiness.DeviceUnsupported))
+        assertNotNull(PetReadiness.petText(PetReadiness.DeviceUnsupported))
     }
 
     @Test
@@ -242,7 +275,7 @@ class PetReadinessTest {
     fun `an ears failure outranks a loading brain`() {
         // Precedence is Failed, then Loading, then Missing — a failure needs a
         // decision and loading resolves itself.
-        val r = of(llm = LlmManager.ModelState.Loading(0.5f), sttError = "bad header")
+        val r = of(llm = LlmManager.ModelState.Downloading(0.5f), sttError = "bad header")
         assertEquals(PetReadiness.Failed(PetFaculty.EARS, "bad header"), r)
     }
 

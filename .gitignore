@@ -24,32 +24,32 @@ pet-esp32/managed_components/
 # versions rather than whatever is newest.
 
 # --- vendored third-party sources (each is its own git clone) ---------------
-# Not submodules on purpose — re-clone these if you need to rebuild natives.
-/llama.cpp/
-/whisper.cpp/
-/piper/
+# Not a submodule on purpose — re-clone this if you need to rebuild the
+# native Opus codec. llama.cpp, whisper.cpp and piper used to live here too;
+# gone along with the JNI bridges that built them — the LLM and STT are
+# Gemini Nano via AICore now (a Gradle dependency, not vendored source) and
+# TTS is the platform android.speech.tts.TextToSpeech engine. Opus stays: the
+# pet-speaker/BLE audio codec, unrelated to which engine produces the PCM.
 /deps/
 android/app/src/main/cpp/deps/
 
-# --- large binaries and ML models (re-downloadable) -------------------------
+# --- large binaries (re-downloadable) ---------------------------------------
 *.jar
 *.zip
 *.tar.bz2
 *.so
 *.a
-*.gguf
-*.onnx
-*.bin
 # The wrapper jar must ship: without it a fresh clone cannot run ./gradlew.
 # This negation was previously written un-prefixed, which silently never
 # matched -- an anchored pattern is relative to this file, and the jar is
 # under android/.
 !android/gradle/wrapper/gradle-wrapper.jar
 
-# Nothing is bundled: all three models — the LLM, the Whisper .bin and the Piper
-# voice — are fetched by the user and imported through the system picker. An
-# earlier build shipped ggml-tiny.en.bin in assets, which cost ~75 MB in the APK
-# AND ~75 MB unpacked, and made the ears the one faculty nobody chose.
+# *.gguf/*.onnx/*.bin used to live here for the same reason /llama.cpp/ etc.
+# did above: none of the three old models were ever bundled, so a picked file
+# landing in the working tree needed ignoring. There is nothing left to pick
+# — no GGUF, no Whisper .bin, no Piper .onnx+.json — so nothing produces
+# those extensions in this repo any more either.
 
 # --- signing ----------------------------------------------------------------
 # The release keystore and its passwords. Losing the .jks means never being able

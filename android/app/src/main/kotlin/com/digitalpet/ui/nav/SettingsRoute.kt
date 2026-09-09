@@ -78,19 +78,15 @@ fun SettingsRoute(
                 subtitle = PetDeviceText.SUBTITLE,
                 onClick = onOpenPet,
             )
-            /*
-             * "LOCAL AI MODELS", not "Voice and language" — renamed with the
-             * 2026-08-07 design system. The old name listed two of the three
-             * faculties behind this page and left out the one people actually
-             * come looking for; the new one names the thing itself, three model
-             * files that run on the phone. `memory` reads as on-device silicon
-             * and does not collide with `psychology`, which already means the
-             * Brain slot *inside* the page.
-             */
+            // "AI STATUS", not "Local AI models" — renamed once there were no
+            // more model files to manage, only an eligibility check to report.
+            // `memory` still reads as on-device silicon and still does not
+            // collide with `psychology`, which means the Brain+Ears slot
+            // *inside* the page.
             SettingsRow(
                 icon = Icons.Default.Memory,
-                title = "Local AI models",
-                subtitle = "The three models the pet needs to hear you, think, and speak",
+                title = "AI status",
+                subtitle = "Whether this phone can run Gemini Nano, and the pet's voice",
                 onClick = onOpenModels,
             )
             SettingsRow(
@@ -238,8 +234,8 @@ fun SettingsPetRoute(onBack: () -> Unit) {
 @Composable
 fun SettingsModelsRoute(onBack: () -> Unit) {
     SettingsScaffold(
-        title = "Local AI models",
-        subtitle = "The three models the pet needs to hear you, think, and speak",
+        title = "AI status",
+        subtitle = "Whether this phone can run Gemini Nano, and the pet's voice",
         onBack = onBack,
     ) { padding ->
         ModelSettingsScreen(padding = padding)

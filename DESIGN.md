@@ -497,10 +497,10 @@ independent models, and not a single shared one. The reasoning matters, because
 both of the obvious answers are wrong:
 
 - **A single shared model fails** because the pet cannot know most of it. Whether
-  Whisper is running, whether the LLM is loading, whether a model file is missing
-  — none of that is visible from an ESP32 holding a BLE link. Pushing twelve
-  states to a device that renders four faces is a protocol designed for a screen
-  it does not have.
+  Speech Recognition is running, whether Gemini Nano is loading, whether this
+  device is even AICore-eligible — none of that is visible from an ESP32 holding
+  a BLE link. Pushing twelve states to a device that renders four faces is a
+  protocol designed for a screen it does not have.
 - **Two independent models fail** because they drift. That is precisely how this
   document rotted the first time: a palette written in one place, adopted
   somewhere else, and never reconciled.
@@ -855,19 +855,31 @@ diagnostics, the raw log, model *swapping* for experiments.
 The sequence is ordered by what breaks first without it, not by what is easiest
 to ask for.
 
+> **Updated for the Gemini Nano migration.** A step 0 was added ahead of
+> Welcome: the LLM and STT are AICore-gated now (`AiCoreAvailability.kt`),
+> and unlike every other blocking step below, an ineligible device has no fix
+> inside this app — there is nowhere to send someone, so it is checked before
+> the app spends anyone's time on the rest of the flow. Step 3 (renumbered 4)
+> changed underneath its own name: "Models" used to mean three files to fetch
+> and import; there are no files left to import at all, so a device that
+> clears step 0 has already satisfied the LLM and STT halves of what this
+> step used to ask for, and it is left checking only the platform TTS engine.
+
 | # | Step | Why here | If declined |
 |---|---|---|---|
+| 0 | **Device eligibility (AICore)** | Gemini Nano requires AICore-capable hardware (Pixel 10/11 today); this is a hard gate, not a degrade | Blocked, terminally — no action this app can offer closes the gap |
 | 1 | **Welcome** | Sets the one expectation the app cannot recover from: there is a physical pet, and this app is its other half | — |
 | 2 | **Bluetooth permission → pair** | Nothing works without a pet. This is the product | Blocked. Say so plainly, offer retry |
-| 3 | **Models** | The silent cliff — see below | Blocked, with the file names and where to put them |
+| 3 | **Models** | The silent cliff — see below | Blocked |
 | 4 | **Screen-time access** | This is *the mechanic*, not a permission grab: it is what makes the pet sick | Degraded, and say which part stops working: the pet can no longer be made ill |
 | 5 | **Notifications** (post + listener) | Nice-to-have: the foreground notification and summaries | Skippable, offered again later |
 
-**Step 3 is the one that matters.** Without an LLM, a Piper voice and a Whisper
-model the pet listens, understands, and says nothing — the documented
-`SttService not initialised` failure. First run states which of the three is
-missing, by name, and hands off to the models page. Anything else produces a pet
-that appears broken rather than unconfigured.
+**Step 3 is the one that matters, though what it is missing has changed.**
+Reaching it at all means AICore already checked out at step 0, so the LLM and
+STT are covered — what is left is whether this phone has a working on-device
+TTS voice at all. Without it the pet listens and understands but answers in
+silence. First run says so and hands off to the AI status page. Anything else
+produces a pet that appears broken rather than unconfigured.
 
 **Permissions are asked for one at a time, at the step that needs them**, never
 as an opening barrage. A run that stops at step 2 has still achieved something:

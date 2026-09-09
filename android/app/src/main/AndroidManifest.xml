@@ -26,6 +26,18 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!--
+        AICore/Gemini Nano needs Google Play services connectivity — a one-time
+        check of whether the Prompt API/Speech Recognition feature is
+        downloaded, and to fetch it if not. See AiCoreAvailability and
+        PermissionInventory.NOTHING_LEAVES, which this permission's presence
+        is exactly what PermissionCopyTest now asserts rather than the
+        opposite it used to. Not a runtime-requestable permission (no consent
+        dialog, no PermissionInventory.Grant row) — this is an install-time
+        permission the system grants automatically.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!--
         USB host, for identifying (and one day flashing) the pet over a cable.
         A FEATURE rather than a permission, and `required=false` on purpose: the
         pet is a BLE device and everything except the first flash works without

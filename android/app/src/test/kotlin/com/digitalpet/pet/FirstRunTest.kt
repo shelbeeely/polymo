@@ -38,7 +38,18 @@ class FirstRunTest {
 
     @Test
     fun `a fresh install opens on the welcome`() {
+        // Not DEVICE_UNSUPPORTED: `nothing`'s readiness is Missing, not
+        // DeviceUnsupported, so an eligible device with nothing set up yet
+        // still opens on WELCOME same as before.
         assertEquals(FirstRunStep.WELCOME, FirstRun.currentStep(nothing))
+    }
+
+    @Test
+    fun `an ineligible device opens on DEVICE_UNSUPPORTED, before even the welcome`() {
+        // The one step checked before WELCOME — nobody should spend time
+        // being told what the product is on hardware that cannot run it.
+        val ineligible = nothing.copy(readiness = PetReadiness.DeviceUnsupported)
+        assertEquals(FirstRunStep.DEVICE_UNSUPPORTED, FirstRun.currentStep(ineligible))
     }
 
     @Test
@@ -53,6 +64,10 @@ class FirstRunTest {
             val step = FirstRun.currentStep(state) ?: return@repeat
             seen += step
             state = when (step) {
+                // Unreachable from `nothing` (its readiness is already Missing,
+                // not DeviceUnsupported), kept only so this `when` stays
+                // exhaustive over every FirstRunStep.
+                FirstRunStep.DEVICE_UNSUPPORTED -> state
                 FirstRunStep.WELCOME -> state.copy(welcomeAcknowledged = true)
                 FirstRunStep.PET -> state.copy(bluetoothGranted = true, petPaired = true)
                 FirstRunStep.MODELS -> state.copy(readiness = PetReadiness.Ready)
@@ -217,21 +232,38 @@ class FirstRunTest {
     }
 
     @Test
-    fun `every step has a title, a body and an action`() {
+    fun `every step has a title and a body`() {
         FirstRunStep.entries.forEach { step ->
             assertTrue("${step.name} has no title", FirstRun.title(step).isNotBlank())
             assertTrue("${step.name} has no body", FirstRun.body(step, nothing).isNotBlank())
-            assertTrue("${step.name} has no action", FirstRun.action(step).isNotBlank())
         }
     }
 
     @Test
-    fun `the welcome has no way to decline and every other step does`() {
+    fun `every step but DEVICE_UNSUPPORTED has an action`() {
+        // DEVICE_UNSUPPORTED is the one step with nowhere in this app to send
+        // someone — no import flow, no settings page closes the gap between
+        // this phone and a Pixel 10/11 — so it alone has no primary action.
+        FirstRunStep.entries.forEach { step ->
+            val action = FirstRun.action(step)
+            if (step == FirstRunStep.DEVICE_UNSUPPORTED) {
+                assertNull("${step.name} should have no action", action)
+            } else {
+                assertTrue("${step.name} has no action", !action.isNullOrBlank())
+            }
+        }
+    }
+
+    @Test
+    fun `neither DEVICE_UNSUPPORTED nor the welcome has a way to decline, everything after does`() {
         // A skip on a welcome screen invites someone to miss the one thing the
         // app cannot recover from them not knowing — that there is a physical
-        // pet. Every step after it is a request, and a request needs a no.
+        // pet. DEVICE_UNSUPPORTED has the same shape for a different reason:
+        // there is nothing to decline about hardware the phone does not have.
+        // Every step after them is a request, and a request needs a no.
+        assertNull(FirstRun.secondary(FirstRunStep.DEVICE_UNSUPPORTED))
         assertNull(FirstRun.secondary(FirstRunStep.WELCOME))
-        FirstRunStep.entries.drop(1).forEach {
+        FirstRunStep.entries.drop(2).forEach {
             assertNotNull("${it.name} offers no way out", FirstRun.secondary(it))
         }
     }
@@ -240,7 +272,8 @@ class FirstRunTest {
     fun `the way out says something different when it ends the run`() {
         // Blocking and optional steps must not share a word: "not now" on a step
         // that ends setup would be a lie about what the tap does.
-        val blocking = FirstRunStep.entries.filter { !it.optional && it != FirstRunStep.WELCOME }
+        val noDeclineSteps = setOf(FirstRunStep.DEVICE_UNSUPPORTED, FirstRunStep.WELCOME)
+        val blocking = FirstRunStep.entries.filter { !it.optional && it !in noDeclineSteps }
             .map { FirstRun.secondary(it) }.toSet()
         val optional = FirstRunStep.entries.filter { it.optional }
             .map { FirstRun.secondary(it) }.toSet()
@@ -259,11 +292,13 @@ class FirstRunTest {
 
     @Test
     fun `the progress reading counts the step you are looking at`() {
-        // "1 of 5" on the first screen, not "0 of 5" — a wizard that opens on
-        // zero has told you only that it has five parts.
-        assertEquals(1, FirstRun.position(FirstRunStep.WELCOME))
-        assertEquals(5, FirstRun.position(FirstRunStep.NOTIFICATIONS))
-        assertEquals(5, FirstRun.total)
+        // "1 of 6" on the very first screen, not "0 of 6" — a wizard that
+        // opens on zero has told you only that it has six parts. Six now,
+        // not five: DEVICE_UNSUPPORTED is checked ahead of the welcome.
+        assertEquals(1, FirstRun.position(FirstRunStep.DEVICE_UNSUPPORTED))
+        assertEquals(2, FirstRun.position(FirstRunStep.WELCOME))
+        assertEquals(6, FirstRun.position(FirstRunStep.NOTIFICATIONS))
+        assertEquals(6, FirstRun.total)
     }
 
     // ---- the readiness fold this depends on ---------------------------------
@@ -275,6 +310,7 @@ class FirstRunTest {
         // skip step 3 in silence — which is the exact failure §5.2 calls the
         // silent cliff.
         val fresh = PetReadiness.of(
+            aiCoreStatus = AiCoreStatus.Available,
             llm = LlmManager.ModelState.Unloaded,
             ttsReady = false,
             sttModelName = null,

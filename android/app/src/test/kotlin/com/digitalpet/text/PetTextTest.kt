@@ -5,9 +5,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Text bound for the pet's screen or for Piper.
+ * Text bound for the pet's screen or for TTS.
  *
- * Every function here has already caused a real bug: markup reaching Piper as
+ * Every function here has already caused a real bug: markup reaching TTS as
  * garbled noise mid-sentence, and a byte-wise truncation that split a
  * multi-byte character and made the firmware reject the whole write.
  */
@@ -48,49 +48,6 @@ class PetTextTest {
     fun `a hyphenated word is not treated as a bullet`() {
         // The bullet rule is anchored to line starts precisely so this survives.
         assertEquals("a well-earned break", PetText.stripMarkup("a well-earned break"))
-    }
-
-    // ---- dropTrailingPartialMarker -----------------------------------------
-
-    @Test
-    fun `a dangling turn marker fragment is removed`() {
-        // The reported bug: the pet audibly said "user" after finishing its
-        // sentence. "<|user|>" arrives as several tokens, so a reply that stops
-        // on the token budget can end mid-marker, and Piper reads the letters.
-        assertEquals("All done!", PetText.dropTrailingPartialMarker("All done!<|user"))
-        assertEquals("All done!", PetText.dropTrailingPartialMarker("All done!<|"))
-        assertEquals("All done!", PetText.dropTrailingPartialMarker("All done! <|us"))
-    }
-
-    @Test
-    fun `the longest matching fragment wins`() {
-        // "<|user" also ends with "<|"; removing only the shorter one would
-        // leave "user" behind, which is the exact sound being complained about.
-        assertEquals("Hi", PetText.dropTrailingPartialMarker("Hi<|user"))
-    }
-
-    @Test
-    fun `a complete marker is not this function's job`() {
-        // Generation already stops at a whole marker and truncates there. Only
-        // fragments reach here, so a full one is left alone rather than
-        // half-handled in two places.
-        val whole = "All done!<|user|>"
-        assertEquals(whole, PetText.dropTrailingPartialMarker(whole))
-    }
-
-    @Test
-    fun `ordinary endings are untouched`() {
-        // The risk in the other direction: this runs on every reply, and words
-        // that happen to end like a marker prefix must survive.
-        for (text in listOf(
-            "That's all.",
-            "See you!",
-            "Talk to the user",     // ends with a whole word, not a fragment
-            "3 < 4",
-            "why not?"
-        )) {
-            assertEquals(text, PetText.dropTrailingPartialMarker(text))
-        }
     }
 
     // ---- truncateUtf8 ------------------------------------------------------
@@ -183,43 +140,4 @@ class PetTextTest {
         }
     }
 
-    // --- stripNonSpeech -----------------------------------------------------
-    //
-    // Whisper returns "[BLANK_AUDIO]" rather than "" for a silent capture. That
-    // is non-empty, so it used to reach the LLM as a prompt and the pet spoke a
-    // 12-second reply to an empty room.
-
-    @Test
-    fun `a silent capture reduces to nothing`() {
-        assertEquals("", PetText.stripNonSpeech("[BLANK_AUDIO]"))
-    }
-
-    @Test
-    fun `other non-speech annotations reduce to nothing`() {
-        for (raw in listOf("[ Silence ]", "[MUSIC]", "(coughing)", "[SOUND]", "[BLANK_AUDIO] [MUSIC]")) {
-            assertEquals("annotation \"$raw\" should leave nothing", "", PetText.stripNonSpeech(raw))
-        }
-    }
-
-    @Test
-    fun `real speech alongside an annotation is kept`() {
-        // Rejecting the whole transcript would throw away what the user said.
-        assertEquals("tell me a joke", PetText.stripNonSpeech("[BLANK_AUDIO] tell me a joke"))
-        assertEquals("hello pet", PetText.stripNonSpeech("hello pet (coughing)"))
-    }
-
-    @Test
-    fun `ordinary speech is untouched`() {
-        val speech = "Hello pet, tell me a very short joke about cats."
-        assertEquals(speech, PetText.stripNonSpeech(speech))
-    }
-
-    @Test
-    fun `an annotation between words does not fuse them together`() {
-        // The annotation must become a space, not vanish. Note the input has no
-        // spaces around it on purpose: with spaces present, replacing by "" and
-        // replacing by " " both collapse to the same string via the \s{2,} rule,
-        // so a spaced input cannot tell the two apart and does not test anything.
-        assertEquals("tell me a joke", PetText.stripNonSpeech("tell[NOISE]me a joke"))
-    }
 }

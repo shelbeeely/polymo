@@ -174,17 +174,22 @@ object PermissionInventory {
      * The floor under every row on the page, and it is checkable rather than
      * reassuring.
      *
-     * **The app declares no `INTERNET` permission at all** — see the manifest,
-     * and `PermissionCopyTest` fails if that ever stops being true. So whatever
-     * these grants let PolyMO read, none of it can be sent anywhere: Whisper,
-     * the language model and Piper all run on the phone, and the only thing that
-     * leaves it is a sentence going to your pet over Bluetooth.
-     *
-     * Worth stating once at the top rather than hedging it into six rows.
+     * **No longer "no internet permission at all" — that stopped being true
+     * when the LLM and STT moved to Gemini Nano via AICore.** AICore needs
+     * Google Play services connectivity for a one-time check of whether the
+     * feature is downloaded, and to fetch it if not; see
+     * `AndroidManifest.xml`'s `INTERNET`/`ACCESS_NETWORK_STATE` and
+     * [com.digitalpet.pet.AiCoreAvailability]. Everything these grants let
+     * PolyMO *read* still never leaves the phone — inference itself runs
+     * on-device — but the absolute "nothing leaves" claim this constant used
+     * to make was the exact kind of stale comment CLAUDE.md warns against,
+     * caught by `PermissionCopyTest` the moment `INTERNET` was declared.
      */
-    const val NOTHING_LEAVES = "None of this can leave your phone. PolyMO has no " +
-        "internet permission at all — it does its listening, thinking and speaking " +
-        "here, and the only thing it sends anywhere is a sentence to your pet."
+    const val NOTHING_LEAVES = "What you say and what your pet hears stays on this " +
+        "phone — PolyMO does its listening, thinking and speaking here, and the " +
+        "only thing it sends anywhere is a sentence to your pet. The one exception: " +
+        "Gemini Nano, which powers the pet's brain and ears, needs a one-time check " +
+        "with Google Play services to confirm it is downloaded on this device."
 
     /**
      * The page's own subtitle, and the settings index's — **one definition, so

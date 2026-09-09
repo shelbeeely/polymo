@@ -26,27 +26,33 @@ class SystemPromptManager @Inject constructor(
         private const val TAG = "SystemPromptManager"
 
         /**
-         * How many past messages to replay into the prompt. **Zero by design.**
+         * How many past messages get replayed into the prompt. **Zero by
+         * design, and no longer a knob this class enforces** — the ML Kit
+         * GenAI Prompt API's calls are stateless (no session/history
+         * retained), so "send no history" is now the API's own behaviour
+         * rather than a `takeLast()` this class applied to a ChatML string.
+         * This constant survives as the documented invariant the rest of the
+         * codebase points to (see [SystemPromptManagerTest] and
+         * `PetConversationEngine.clearHistory`'s doc comment), and the
+         * reasoning it used to enforce is still exactly why raising it would
+         * be a mistake:
          *
-         * Two reasons, both measured:
+         * 1. Latency. Prompt prefill dominates on-device time; ten replayed
+         *    messages measured at ~56s to the first word against llama.cpp,
+         *    versus near-instant at zero — a KV-cache-specific number that no
+         *    longer applies verbatim to Gemini Nano, but the shape of the
+         *    cost (more context in, more time to first token) does not go
+         *    away with the engine.
          *
-         * 1. Latency. Prompt prefill dominates on-device time, and a sliding
-         *    window changes the prompt prefix every turn, so the KV cache only
-         *    survives as far as the system prompt and everything after is
-         *    re-processed. Measured: 10 messages -> ~971 prompt tokens, 848
-         *    re-processed, ~56s. 4 messages -> ~215 re-processed, ~11s to the
-         *    first word. At 0 only the user's own message is new, so the cached
-         *    system prompt covers nearly the whole prefix.
+         * 2. Relevance. History here is not just conversation — the app
+         *    injects synthetic turns for notification summaries and
+         *    screen-time nags. Replaying those made the pet answer a bare
+         *    "hi" by reciting notifications or calling back to an old joke.
          *
-         * 2. Relevance. History here is not just conversation — the app injects
-         *    synthetic turns for notification summaries and screen-time nags.
-         *    Replaying those made the pet answer a bare "hi" by reciting
-         *    notifications or calling back to an old joke.
-         *
-         * The cost is that the pet cannot follow up on its own last line, so a
-         * bare "why?" has no referent. If that becomes a problem, prefer adding
-         * back a small window that *excludes* the synthetic messages over simply
-         * raising this number.
+         * The cost is that the pet cannot follow up on its own last line, so
+         * a bare "why?" has no referent. If that becomes a problem, it needs
+         * building back deliberately (the Prompt API has no session concept
+         * to just re-enable) rather than by raising this number.
          */
         const val DEFAULT_HISTORY_MESSAGES: Int = 0
 
@@ -225,33 +231,30 @@ class SystemPromptManager @Inject constructor(
     }
 
     /**
-     * Build a complete prompt string from the system prompt, conversation
-     * history, and the latest user message.
+     * Build the system instruction for a turn: the persona + the condition
+     * clause, concatenated.
      *
-     * The prompt uses ChatML-style delimiters so the model can distinguish
-     * between roles:
-     * ```
-     * <|system|>
-     * {system prompt}
-     * <|user|>
-     * {history + current message}
-     * <|assistant|>
-     * ```
+     * **Replaces `buildPrompt`'s ChatML template.** There is no `<|system|>`/
+     * `<|user|>`/`<|assistant|>` string to assemble any more — this plain
+     * concatenation becomes [LlmManager.generate]'s `systemPrompt` parameter,
+     * which wraps it in a `PromptPrefix` (the Prompt API's shipped
+     * `1.0.0-beta2` has no dedicated system-instruction field; an earlier
+     * draft assumed one from prose docs describing a newer surface — see
+     * [LlmManager.generate]'s doc comment for the real, decompiled shape).
+     * No history to splice in either: the Prompt API's `generateContent`/
+     * `generateContentStream` calls are stateless (no session retained), so
+     * [DEFAULT_HISTORY_MESSAGES]'s "send no history" rule is now just the
+     * API's default behaviour rather than something this function has to
+     * enforce by truncating a list.
      *
-     * @param userMessage          the current message from the user.
-     * @param conversationHistory  recent messages (oldest first). An empty
-     *                             list omits history from the prompt.
-     * @param maxHistoryMessages   how many history messages to include.
-     *                             Older messages are trimmed from the front.
-     * @param condition            how the pet says it is, from v4's Condition
-     *                             characteristic. **Null means not known yet**
-     *                             and emits nothing; see [conditionClause].
-     * @return the fully assembled prompt string.
+     * @param condition how the pet says it is, from v4's Condition
+     *   characteristic. **Null means not known yet** and emits nothing; see
+     *   [conditionClause].
+     * @return the system instruction text for [LlmManager.generate]'s
+     *   `systemPrompt` parameter. The caller passes the user's message to
+     *   `generate`'s `prompt` parameter separately, unmodified.
      */
-    fun buildPrompt(
-        userMessage: String,
-        conversationHistory: List<Message> = emptyList(),
-        maxHistoryMessages: Int = DEFAULT_HISTORY_MESSAGES,
+    fun buildSystemInstruction(
         systemPrompt: String = DEFAULT_PET_SYSTEM_PROMPT,
         condition: PetProtocol.Condition? = null
     ): String {
@@ -260,84 +263,17 @@ class SystemPromptManager @Inject constructor(
         // Logged in full rather than as a flag: this is what makes "the pet
         // knew it was hungry" answerable from a logcat line instead of by
         // inferring it from the reply the model happened to produce.
-        diagnosticLogger.log(
-            TAG,
-            "buildPrompt — historySize=${conversationHistory.size}, " +
-                "maxHistory=$maxHistoryMessages, condition=\"${clause.trim()}\""
-        )
+        diagnosticLogger.log(TAG, "buildSystemInstruction — condition=\"${clause.trim()}\"")
 
-        val recentHistory = conversationHistory.takeLast(maxHistoryMessages)
-
-        return buildString {
-            // System instruction.
-            append("<|system|>\n")
-            append(systemPrompt)
-            // The condition goes AFTER the persona, not before it, and that
-            // ordering is load-bearing: llama.cpp reuses the KV cache for
-            // whatever prefix is unchanged, and LlamaNative.warmup() prefills
-            // exactly "<|system|>\n" + systemPrompt. Appending leaves that
-            // prefill intact and re-processes only the clause and the user's
-            // message; prepending would move the divergence to the first token
-            // and re-prefill the whole ~150-token persona on every turn the
-            // pet's scores changed.
-            append(clause)
-            append("<|end|>\n")
-
-            // Conversation history.
-            for (message in recentHistory) {
-                val roleTag = when (message.role) {
-                    MessageRole.SYSTEM    -> "<|system|>"
-                    MessageRole.USER      -> "<|user|>"
-                    MessageRole.ASSISTANT -> "<|assistant|>"
-                }
-                append(roleTag)
-                append("\n")
-                append(message.content)
-                append("<|end|>\n")
-            }
-
-            // Current user message.
-            append("<|user|>\n")
-            append(userMessage)
-            append("<|end|>\n")
-
-            // Prompt the model to respond.
-            append("<|assistant|>\n")
-        }
-    }
-
-    /**
-     * Build a prompt that asks the pet to summarise and react to a batch of
-     * device notifications.
-     *
-     * The pet should respond in-character, picking out interesting or
-     * important notifications and offering commentary.
-     *
-     * @param notifications the list of recently captured notifications.
-     * @return the fully assembled notification summary prompt.
-     */
-    fun buildNotificationSummaryPrompt(notifications: List<NotificationData>): String {
-        diagnosticLogger.log(TAG, "buildNotificationSummaryPrompt — count=${notifications.size}")
-
-        return buildString {
-            append("<|system|>\n")
-            append(DEFAULT_PET_SYSTEM_PROMPT)
-            append("\n\n")
-            append(
-                "The user has received the following notifications. " +
-                "Summarise the important ones briefly and react in character. " +
-                "Be concise and highlight anything that might need the user's attention."
-            )
-            append("<|end|>\n")
-
-            append("<|user|>\n")
-            append("Here are my recent notifications:\n\n")
-            for (notification in notifications) {
-                append("• [${notification.appName}] ${notification.title}: ${notification.text}\n")
-            }
-            append("<|end|>\n")
-
-            append("<|assistant|>\n")
-        }
+        // The condition still goes AFTER the persona, matching the old
+        // ordering — readable ("you are a cheerful pet... right now you
+        // feel hungry" reads right; the reverse does not) AND still relevant
+        // to caching: PetConversationEngine wraps this whole string in one
+        // PromptPrefix, and appending here means a prefix-cache hit survives
+        // for however long the pet's mood stays put, which in practice is
+        // most turns — see that call site's doc comment for why this pair
+        // is kept together rather than split across the prefix/content
+        // boundary.
+        return systemPrompt + clause
     }
 }

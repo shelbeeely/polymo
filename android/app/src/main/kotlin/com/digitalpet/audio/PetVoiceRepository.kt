@@ -162,15 +162,14 @@ class PetVoiceRepository @Inject constructor(
         scope.launch {
             _isTranscribing.value = true
             try {
-                val raw = stt.transcribe(samples).trim()
-                // Whisper reports silence as "[BLANK_AUDIO]", not as "" — see
-                // PetText.stripNonSpeech. Emitting that drives a full reply to
-                // nothing at all.
-                val text = com.digitalpet.text.PetText.stripNonSpeech(raw)
+                // ML Kit Speech Recognition reports silence as "" directly,
+                // unlike Whisper's bracketed "[BLANK_AUDIO]" annotations —
+                // no separate stripping step needed for a silent capture.
+                val text = stt.transcribe(samples).trim()
                 if (text.isNotEmpty()) {
                     _transcripts.emit(text)
                 } else {
-                    logger.log(TAG, "transcribed to nothing (raw \"$raw\")")
+                    logger.log(TAG, "transcribed to nothing")
                 }
             } catch (e: Exception) {
                 logger.log(TAG, "transcription failed: ${e.message}")

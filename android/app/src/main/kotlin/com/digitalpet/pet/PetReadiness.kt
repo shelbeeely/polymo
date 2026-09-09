@@ -69,6 +69,20 @@ sealed interface PetReadiness {
     /** No file for one or more faculties. The first-run case. */
     data class Missing(val which: List<PetFaculty>) : PetReadiness
 
+    /**
+     * This device does not have AICore, or does not have it configured for
+     * Gemini Nano, or fails Speech Recognition Advanced mode's device list.
+     *
+     * **Deliberately not a [Missing]-shaped problem.** Missing is fixable —
+     * go get the file. This is not: nothing in Settings, no import flow, no
+     * action this app can offer closes the gap between this phone and a
+     * Pixel 10/11. It outranks every other state for exactly that reason —
+     * see [of]'s precedence — and it is what
+     * `FirstRunStep.DEVICE_UNSUPPORTED` exists to catch before first run ever
+     * reaches [Missing]'s old territory.
+     */
+    data object DeviceUnsupported : PetReadiness
+
     companion object {
         /**
          * Fold the three services into one answer.
@@ -89,20 +103,35 @@ sealed interface PetReadiness {
          * [PetFaculty]: with no brain nothing works at all, and reporting the
          * lesser of two simultaneous failures would send someone to fix the one
          * that was not stopping them.
+         *
+         * **[aiCoreStatus] is checked before any of it**, and returns
+         * [DeviceUnsupported] rather than falling through to the old
+         * per-faculty reasoning. An ineligible device was never going to reach
+         * [LlmManager.ModelState.Ready] anyway, but arriving there via
+         * [Missing] would have described the problem as "add a file", which is
+         * not the fix.
          */
         fun of(
+            aiCoreStatus: AiCoreStatus,
             llm: LlmManager.ModelState,
             ttsReady: Boolean,
             sttModelName: String?,
             sttError: String? = null,
         ): PetReadiness {
+            if (aiCoreStatus is AiCoreStatus.Unsupported) {
+                return DeviceUnsupported
+            }
             if (llm is LlmManager.ModelState.Error) {
                 return Failed(PetFaculty.BRAIN, llm.message)
             }
             if (sttError != null) {
                 return Failed(PetFaculty.EARS, sttError)
             }
-            if (llm is LlmManager.ModelState.Loading) {
+            if (llm is LlmManager.ModelState.CheckingAvailability ||
+                llm is LlmManager.ModelState.Downloading ||
+                aiCoreStatus is AiCoreStatus.Checking ||
+                aiCoreStatus is AiCoreStatus.Downloading
+            ) {
                 return Loading(PetFaculty.BRAIN)
             }
 
@@ -123,6 +152,7 @@ sealed interface PetReadiness {
          */
         fun headline(r: PetReadiness): String? = when (r) {
             is Ready -> null
+            is DeviceUnsupported -> "This phone can't run your pet."
             is Loading -> "Waking up…"
             is Failed -> "Your pet cannot ${r.which.friendly}."
             is Missing -> when (r.which.size) {
@@ -149,6 +179,12 @@ sealed interface PetReadiness {
          */
         fun petText(r: PetReadiness): String? = when (r) {
             is Ready -> null
+            // Spoken by the pet itself where possible — but a device this
+            // ineligible likely never got the app talking to it over BLE in
+            // the first place, so this mostly exists for completeness and the
+            // rare case of a pet that paired before its phone stopped
+            // qualifying (an OS update, a bootloader unlock).
+            is DeviceUnsupported -> "my phone can't run me anymore - check the app"
             is Loading -> "just waking up..."
             is Failed -> "something's wrong with me - check the app"
             is Missing -> when (r.which.size) {
@@ -166,6 +202,9 @@ sealed interface PetReadiness {
          */
         fun action(r: PetReadiness): String? = when (r) {
             is Ready -> null
+            // No action, on purpose: unlike Missing, there is nothing in this
+            // app that closes the gap between this phone and a Pixel 10/11.
+            is DeviceUnsupported -> null
             // "Loading its a .gguf language model" — `what` already carries
             // its own article, which only showed up in real output.
             is Loading -> "Loading ${r.which.what}."

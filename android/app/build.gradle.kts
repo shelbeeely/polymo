@@ -96,10 +96,11 @@ android {
      * AND THE MANIFEST, for the same reason and a sharper one.
      *
      * `PermissionCopyTest` checks the Permissions page's promises against it —
-     * that the app declares no INTERNET permission, and that BLUETOOTH_SCAN is
-     * still `neverForLocation`. Adding INTERNET is exactly the change that would
-     * touch no Kotlin at all, so without this the test task would be UP-TO-DATE
-     * and the page would go on claiming nothing can leave the phone.
+     * that INTERNET/ACCESS_NETWORK_STATE are declared and the page admits why
+     * (AICore's Play-services check), and that BLUETOOTH_SCAN is still
+     * `neverForLocation`. Any of those changing is exactly the kind of edit
+     * that touches no Kotlin at all, so without this the test task would be
+     * UP-TO-DATE and the page could drift from the manifest silently.
      */
     val watchedFiles = listOf(file("src/main/AndroidManifest.xml"))
 
@@ -145,10 +146,11 @@ android {
     defaultConfig {
         externalNativeBuild {
             cmake {
+                // GGML_NATIVE was llama.cpp's own flag — gone with it; the
+                // native build is Opus only now, see cpp/CMakeLists.txt.
                 arguments += listOf(
                     "-DCMAKE_BUILD_TYPE=Release",
                     "-DANDROID_STL=c++_shared",
-                    "-DGGML_NATIVE=OFF"
                 )
             }
         }
@@ -221,6 +223,12 @@ dependencies {
     implementation(libs.hilt.navigation.compose)
 
     implementation(libs.kotlinx.coroutines.android)
+
+    // Gemini Nano via AICore. Advanced (Nano-backed) Speech Recognition is
+    // Pixel 10/11 only today — see pet/AiCoreAvailability.kt, the hard gate
+    // this app runs on rather than a plain minSdk floor.
+    implementation(libs.mlkit.genai.prompt)
+    implementation(libs.mlkit.genai.speech.recognition)
 
     // Unit tests for the pure logic only — parsing, framing and DSP. Nothing
     // here touches Android, a device or the model files.

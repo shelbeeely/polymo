@@ -5,14 +5,15 @@ package com.digitalpet.text
  *
  * The LLM writes for a chat window: markdown, emoji, arbitrary length. Two
  * consumers cannot cope with that. The pet's screen renders LVGL's Montserrat
- * — no markup, no emoji — and holds 240 bytes. Piper pronounces punctuation it
- * does not understand, so "**Slack**" comes out as noise around the word.
+ * — no markup, no emoji — and holds 240 bytes. The TTS engine pronounces
+ * punctuation it does not understand, so "**Slack**" comes out as noise
+ * around the word.
  *
  * The chat itself keeps the original text; only these two get the cleaned
  * version.
  *
  * Everything here is pure, and every function has already produced a real bug:
- * markup reaching Piper as garbled noise, and a byte-truncation that split a
+ * markup reaching TTS as garbled noise, and a byte-truncation that split a
  * multi-byte character in half.
  */
 object PetText {
@@ -39,68 +40,6 @@ object PetText {
             .replace(Regex("""\[([^]]*)]\([^)]*\)"""), "$1")                // links -> label
             .replace(Regex("""[ \t]{2,}"""), " ")
             .trim()
-
-    /**
-     * Strip Whisper's non-speech annotations, and report whether anything the
-     * user actually said is left.
-     *
-     * Whisper does not return an empty string for silence — it returns a bracketed
-     * annotation describing what it heard: "[BLANK_AUDIO]" for a silent clip, and
-     * "[MUSIC]", "(coughing)", "[ Silence ]" and similar for room noise. Those are
-     * non-empty, so an `isNotEmpty()` check passes them straight through as if the
-     * user had spoken them.
-     *
-     * Observed doing real damage: a capture of an empty room transcribed as
-     * "[BLANK_AUDIO]", which went to the LLM as a prompt and came back as an
-     * unprompted 240-character monologue that the pet then spoke for 12 seconds.
-     * The pet talking to itself about nothing is worse than the pet staying quiet.
-     *
-     * Annotations are removed rather than the whole transcript being rejected,
-     * because a real utterance can carry one: "[BLANK_AUDIO] tell me a joke" keeps
-     * "tell me a joke". Returns "" when only annotations were present.
-     */
-    fun stripNonSpeech(text: String): String =
-        text
-            .replace(Regex("""\[[^\[\]]*]"""), " ")   // [BLANK_AUDIO], [ Silence ], [MUSIC]
-            .replace(Regex("""\([^()]*\)"""), " ")    // (coughing), (buzzing)
-            .replace(Regex("""\s{2,}"""), " ")
-            .trim()
-
-    /**
-     * Turn-markers the model emits to end its reply. Generation stops at the
-     * first of these, but they arrive split across tokens, so a partial one can
-     * be left behind when generation ends for another reason.
-     */
-    val CHAT_MARKERS = listOf(
-        "<|user|>", "<|end|>", "<|system|>", "<|assistant|>", "user:", "assistant:"
-    )
-
-    /**
-     * Drop a trailing fragment of a turn-marker.
-     *
-     * "<|user|>" reaches us as several tokens, so a reply that stops on the
-     * token budget can end mid-marker — with "<|us" left dangling. Displayed
-     * that is odd; spoken it is worse, because Piper reads the letters out and
-     * the pet appears to say "user" after finishing its sentence.
-     */
-    fun dropTrailingPartialMarker(text: String): String {
-        for (marker in CHAT_MARKERS) {
-            // Only the bracketed markers. A fragment of "user:" is the word
-            // "user", so stripping those turns "Talk to the user" into "Talk to
-            // the" — losing a real word to protect against a rare one. "<|" does
-            // not occur in ordinary prose, so its fragments are unambiguous.
-            if (!marker.startsWith("<|")) continue
-
-            // Longest fragment first: "<|user" must win over "<|", or the tail
-            // left behind is the very word being complained about.
-            for (len in marker.length - 1 downTo 2) {
-                if (text.endsWith(marker.substring(0, len))) {
-                    return text.substring(0, text.length - len).trimEnd()
-                }
-            }
-        }
-        return text
-    }
 
     /**
      * Truncate to at most [maxBytes] of UTF-8 **without splitting a character**.

@@ -345,6 +345,7 @@ fun PetHomeScreen(
                         is PetReadiness.Loading -> "Loading…"
                         is PetReadiness.Failed -> "Model failed"
                         is PetReadiness.Missing -> "Models missing"
+                        is PetReadiness.DeviceUnsupported -> "Unsupported phone"
                     },
                     good = readiness is PetReadiness.Ready,
                     onClick = onOpenModelSettings,

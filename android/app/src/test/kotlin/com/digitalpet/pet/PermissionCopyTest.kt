@@ -22,21 +22,32 @@ import java.io.File
 class PermissionCopyTest {
 
     @Test
-    fun `the no-internet claim is true, and this is what keeps it true`() {
-        // The page says "None of this can leave your phone. PolyMO has no
-        // internet permission at all". Adding INTERNET later would turn a
-        // verifiable statement into a false one, on the one screen where a
-        // person is deciding what to trust the app with. Nothing else in the
-        // build would notice.
+    fun `the AICore network exception is declared AND admitted on the page`() {
+        // The claim flipped the other way round from what this test used to
+        // guard: AICore/Gemini Nano needs Google Play services connectivity
+        // for a one-time feature-availability check, so the manifest now
+        // DOES declare INTERNET/ACCESS_NETWORK_STATE — and the page's copy
+        // has to say so rather than go on claiming the old absolute "no
+        // internet permission at all", which would now be the lie this test
+        // exists to catch (see CLAUDE.md: a comment that is now false is
+        // worse than no comment).
         val manifest = manifest().readText()
         assertTrue(
-            "AndroidManifest declares INTERNET, which makes NOTHING_LEAVES a lie " +
-                "on the Permissions page. Either drop the permission or rewrite " +
-                "PermissionInventory.NOTHING_LEAVES to tell the truth.",
-            !manifest.contains("android.permission.INTERNET"),
+            "AndroidManifest no longer declares INTERNET — either AICore's own " +
+                "requirements changed, or this permission was dropped without " +
+                "checking whether AiCoreAvailability still needs it.",
+            manifest.contains("android.permission.INTERNET"),
         )
-        assertTrue(!manifest.contains("android.permission.ACCESS_NETWORK_STATE"))
-        assertTrue(PermissionInventory.NOTHING_LEAVES.contains("no internet permission"))
+        assertTrue(manifest.contains("android.permission.ACCESS_NETWORK_STATE"))
+        assertTrue(
+            "NOTHING_LEAVES still claims no internet permission at all, which " +
+                "is false now that AICore needs Play services connectivity",
+            !PermissionInventory.NOTHING_LEAVES.contains("no internet permission"),
+        )
+        assertTrue(
+            "NOTHING_LEAVES doesn't admit the one exception it now has",
+            PermissionInventory.NOTHING_LEAVES.contains("Play services"),
+        )
     }
 
     @Test

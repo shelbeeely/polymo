@@ -232,8 +232,11 @@ class PetConversationEngine @Inject constructor(
             }
         }
 
-        // Persisted chat history. Also the generation input, so it has to be
-        // maintained whether or not anything is on screen.
+        // Persisted chat history, shown in the transcript. No longer the
+        // generation input — the Prompt API's calls are stateless and take
+        // only the current message — but still maintained whether or not
+        // anything is on screen, since the transcript has to survive a
+        // process restart.
         scope.launch {
             messageDao.getAllMessages().map { entities ->
                 entities.map { entity ->
@@ -311,8 +314,6 @@ class PetConversationEngine @Inject constructor(
                     "$thresholdMinutes minutes and it is making you unwell. " +
                     "Say something short about how you feel and ask them to stop."
 
-                val history = _messages.value   // snapshot before persisting
-
                 persistMessage(
                     Message(
                         role = MessageRole.USER,
@@ -320,7 +321,7 @@ class PetConversationEngine @Inject constructor(
                     )
                 )
 
-                startGenerationWithPrompt(prompt, history)
+                startGenerationWithPrompt(prompt)
             }
         }
     }
@@ -432,14 +433,9 @@ class PetConversationEngine @Inject constructor(
             NotificationIntent.Ask.NONE -> Unit
         }
 
-        // Snapshot the history BEFORE persisting the new message. persistMessage()
-        // is asynchronous (DB insert -> Room Flow -> _messages), so _messages is
-        // not yet updated when generation starts. See startGenerationWithPrompt.
-        val history = _messages.value
-
         persistMessage(Message(role = MessageRole.USER, content = text.trim()))
 
-        startGenerationWithPrompt(text.trim(), history)
+        startGenerationWithPrompt(text.trim())
     }
 
     /** Resolve a package name to its user-visible label, falling back to the package. */
@@ -601,8 +597,6 @@ class PetConversationEngine @Inject constructor(
             promptBuilder.append("---\n")
         }
 
-        val history = _messages.value   // snapshot before persisting
-
         // Summaries need room to actually list the notifications — the chat
         // prompt's ~150-character cap made the model editorialise instead.
         // mirrorToPet is TRUE now, with a budget. It was false on the grounds
@@ -615,12 +609,9 @@ class PetConversationEngine @Inject constructor(
         // condition = null: this persona is a summariser, told explicitly to add
         // no commentary and to cover only the notifications it is given. A pet
         // that mentions being hungry halfway down a list of messages is the
-        // editorialising that prompt exists to stop — and the two personas are
-        // separate KV-cache prefixes anyway, so injecting a clause that moves
-        // between summaries would cost a re-prefill for nothing.
+        // editorialising that prompt exists to stop.
         startGenerationWithPrompt(
             promptBuilder.toString(),
-            history,
             systemPrompt = SystemPromptManager.NOTIFICATION_SYSTEM_PROMPT,
             maxTokens = SUMMARY_MAX_TOKENS,
             mirrorToPet = true,
@@ -631,17 +622,8 @@ class PetConversationEngine @Inject constructor(
 
     // --- generation ---------------------------------------------------------
 
-    /**
-     * @param conversationHistory messages preceding [promptText], snapshotted by
-     *   the caller *before* it persisted the new message. Do not read
-     *   [_messages] here: persistMessage() only reaches it asynchronously via
-     *   Room's Flow, so at this point it usually still lacks the new message —
-     *   the previous `dropLast(1)` therefore trimmed the last *assistant* turn
-     *   instead, quietly dropping the pet's own reply from its context.
-     */
     private fun startGenerationWithPrompt(
         promptText: String,
-        conversationHistory: List<Message>,
         /*
          * The pet's CHOSEN voice, not the built-in one.
          *
@@ -759,9 +741,22 @@ class PetConversationEngine @Inject constructor(
 
         generationJob = scope.launch {
             try {
-                val prompt = systemPromptManager.buildPrompt(
-                    userMessage = promptText,
-                    conversationHistory = conversationHistory,
+                // Not a ChatML template any more — just the persona + the
+                // condition clause, still together (LlmManager.generate wraps
+                // this whole thing in one PromptPrefix). Grouping them keeps
+                // the condition as system-level framing about who the pet is
+                // right now, not text blended into the user's own words —
+                // the cost is that a prefix-cache hit is scoped to stretches
+                // where the pet's mood does not change, which is the common
+                // case: satiety/happiness decay over real minutes and hours,
+                // not message to message, so a cache miss on a mood shift is
+                // rare and the persona+condition pair stays warm otherwise.
+                //
+                // conversationHistory is no longer spliced in anywhere: the
+                // Prompt API's calls are stateless, so "send no history"
+                // (SystemPromptManager.DEFAULT_HISTORY_MESSAGES) is now the
+                // API's default behaviour rather than something built by hand.
+                val systemInstruction = systemPromptManager.buildSystemInstruction(
                     systemPrompt = systemPrompt,
                     condition = condition
                 )
@@ -769,13 +764,11 @@ class PetConversationEngine @Inject constructor(
                 val responseBuilder = StringBuilder()
                 // How much of responseBuilder has already gone to the voice.
                 // Deliberately an index into that builder rather than a second
-                // buffer: responseBuilder is the one truncated when a turn
-                // marker appears, and a separate buffer silently kept the part
-                // that was trimmed. "<|user|>" arrives as several tokens, so
-                // "<|user" sat in it unmatched and was spoken after the reply —
-                // the pet appearing to say "user" at the end of every sentence.
+                // buffer, matching the pattern the old anti-prompt trimming
+                // used — kept even though there is no ChatML template left to
+                // leak, since a degenerate-repetition stop still truncates
+                // responseBuilder the same way.
                 var dispatched = 0
-                val antiPrompts = PetText.CHAT_MARKERS
 
                 // Backstop against degenerate repetition. The sampler now applies
                 // a repeat penalty, which is the real fix, but a small model can
@@ -790,25 +783,13 @@ class PetConversationEngine @Inject constructor(
                 var voiced = ""
 
                 llmManager.generate(
-                    prompt = prompt,
-                    systemPrompt = systemPrompt,
+                    prompt = promptText,
+                    systemPrompt = systemInstruction,
                     maxTokens = maxTokens
                 ).takeWhile { token ->
                     responseBuilder.append(token)
 
-                    val currentResp = responseBuilder.toString()
-                    var hitAntiPrompt = false
-
-                    for (ap in antiPrompts) {
-                        val idx = currentResp.indexOf(ap, ignoreCase = true)
-                        if (idx >= 0) {
-                            responseBuilder.setLength(idx)
-                            hitAntiPrompt = true
-                            break
-                        }
-                    }
-
-                    if (!hitAntiPrompt) {
+                    run {
                         val pending = responseBuilder.substring(
                             dispatched.coerceAtMost(responseBuilder.length)
                         )
@@ -853,25 +834,20 @@ class PetConversationEngine @Inject constructor(
 
                     _currentStreamingResponse.value = responseBuilder.toString()
 
-                    !hitAntiPrompt && !degenerate
+                    !degenerate
                 }.collect()
 
-                // Whatever is left after the last sentence boundary. Taken from
-                // responseBuilder so anything a turn marker trimmed is gone, and
-                // stripped of a partial marker in case generation stopped on the
-                // token budget mid-"<|user|>".
-                val tail = PetText.dropTrailingPartialMarker(
-                    responseBuilder.substring(
-                        dispatched.coerceAtMost(responseBuilder.length)
-                    ).trim()
-                )
+                // Whatever is left after the last sentence boundary.
+                val tail = responseBuilder.substring(
+                    dispatched.coerceAtMost(responseBuilder.length)
+                ).trim()
                 if (tail.isNotBlank() && voiced.length < spokenBudget) {
                     ttsChannel.trySend(tail)
                     voiced = responseBuilder.toString().trim()
                 }
                 ttsChannel.close()
 
-                val reply = PetText.dropTrailingPartialMarker(responseBuilder.toString().trim())
+                val reply = responseBuilder.toString().trim()
                 persistMessage(Message(role = MessageRole.ASSISTANT, content = reply))
                 _currentStreamingResponse.value = ""
 
