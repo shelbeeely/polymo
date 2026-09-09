@@ -243,6 +243,9 @@ private fun act(
     PermissionInventory.Grant.RECORD_AUDIO ->
         request(arrayOf(Manifest.permission.RECORD_AUDIO))
 
+    PermissionInventory.Grant.CAMERA ->
+        request(arrayOf(Manifest.permission.CAMERA))
+
     PermissionInventory.Grant.POST_NOTIFICATIONS ->
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             request(arrayOf(Manifest.permission.POST_NOTIFICATIONS))

@@ -14,6 +14,7 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Memory
@@ -35,6 +36,8 @@ import com.digitalpet.ui.settings.PermissionsScreen
 import com.digitalpet.ui.components.settings.SettingsRow
 import com.digitalpet.ui.components.settings.SettingsScaffold
 import com.digitalpet.ui.screens.AppUsageViewModel
+import com.digitalpet.ui.screens.PetChatViewModel
+import com.digitalpet.ui.screens.VisionScreen
 import com.digitalpet.ui.screens.components.ScreenTimeScreen
 import com.digitalpet.ui.settings.ModelSettingsScreen
 import com.digitalpet.ui.settings.PetDeviceScreen
@@ -64,6 +67,7 @@ fun SettingsRoute(
     onOpenScreenTime: () -> Unit,
     onOpenPermissions: () -> Unit,
     onOpenAppearance: () -> Unit,
+    onOpenVision: () -> Unit,
 ) {
     SettingsScaffold(title = "Settings", onBack = onBack) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())) {
@@ -94,6 +98,16 @@ fun SettingsRoute(
                 title = "Screen time",
                 subtitle = ScreenTimeDisplay.SUBTITLE,
                 onClick = onOpenScreenTime,
+            )
+            // The newest and least essential sense — the pet has none of its
+            // own yet, so this is the only vision source that exists today.
+            // Above Permissions/Appearance for the same reason Screen time is:
+            // it is a feature, not app-wide chrome or a prerequisite.
+            SettingsRow(
+                icon = Icons.Default.CameraAlt,
+                title = "Show the pet something",
+                subtitle = "Point this phone's camera at something for the pet to react to",
+                onClick = onOpenVision,
             )
             /*
              * ABOVE Appearance and below the three features, because it is a
@@ -273,4 +287,17 @@ fun SettingsScreenTimeRoute(
             },
         )
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsVisionRoute(
+    chatViewModel: PetChatViewModel,
+    onBack: () -> Unit,
+) {
+    SettingsScaffold(
+        title = "Show the pet something",
+        subtitle = "Point this phone's camera at something for the pet to react to",
+        onBack = onBack,
+    ) { padding -> VisionScreen(chatViewModel = chatViewModel, padding = padding) }
 }

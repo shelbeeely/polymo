@@ -118,6 +118,13 @@ fun PetNavHost(
                 onOpenScreenTime = { navController.navigate(PetDestination.SettingsScreenTime.route) },
                 onOpenPermissions = { navController.navigate(PetDestination.SettingsPermissions.route) },
                 onOpenAppearance = { navController.navigate(PetDestination.SettingsAppearance.route) },
+                onOpenVision = { navController.navigate(PetDestination.SettingsVision.route) },
+            )
+        }
+        composable(PetDestination.SettingsVision.route) {
+            SettingsVisionRoute(
+                chatViewModel = chatViewModel,
+                onBack = { navController.popBackStack() },
             )
         }
         composable(PetDestination.SettingsPermissions.route) {

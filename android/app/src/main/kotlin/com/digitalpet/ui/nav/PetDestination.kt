@@ -70,4 +70,12 @@ sealed class PetDestination(val route: String) {
      */
     data object SettingsPermissions : PetDestination("settings/permissions")
 
+    /**
+     * "Show the pet something" — the Pixel 10's own camera, phase 11 of the
+     * AICore migration. The only vision source that exists today: the pet's
+     * own onboard camera and the docked USB feed are both still blocked on
+     * hardware that has not been built yet.
+     */
+    data object SettingsVision : PetDestination("settings/vision")
+
 }

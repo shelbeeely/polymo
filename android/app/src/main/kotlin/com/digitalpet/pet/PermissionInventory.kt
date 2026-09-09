@@ -139,6 +139,21 @@ object PermissionInventory {
                 "working; you can still talk to the pet through the pet.",
             how = How.DIALOG,
         ),
+        // LAST, and for the same reason RECORD_AUDIO is second-to-last: this
+        // phone's own camera is the newest and least essential of the pet's
+        // senses. The pet has none of its own yet (that camera is still
+        // pending hardware), so this is the only vision source that exists
+        // today, and the whole conversation loop works with none of it.
+        CAMERA(
+            title = "Take pictures with this phone's camera",
+            allows = "Lets PolyMO use this phone's camera to take a picture.",
+            use = "Only when you choose to show the pet something or scan a " +
+                "document. The picture is analysed on this phone and never saved " +
+                "unless you are scanning a document on purpose.",
+            consequence = "Without it you cannot show the pet what this phone's " +
+                "camera sees, and the document scanner is unavailable.",
+            how = How.DIALOG,
+        ),
     }
 
     /** One line of the page. */

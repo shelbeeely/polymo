@@ -1,10 +1,12 @@
 package com.digitalpet.llm
 
+import android.graphics.Bitmap
 import com.digitalpet.pet.AiCoreAvailability
 import com.digitalpet.pet.AiCoreStatus
 import com.digitalpet.util.DiagnosticLogger
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
+import com.google.mlkit.genai.prompt.ImagePart
 import com.google.mlkit.genai.prompt.PromptPrefix
 import com.google.mlkit.genai.prompt.TextPart
 import com.google.mlkit.genai.prompt.generateContentRequest
@@ -156,6 +158,14 @@ class LlmManager @Inject constructor(
      *   against the real `GenerateContentRequest.Builder`. Kept in the
      *   signature only so this is not a breaking change for callers that
      *   still pass it.
+     * @param image when non-null, sent alongside [prompt] as an [ImagePart] —
+     *   the Prompt API's multimodal path
+     *   (`GenerateContentRequest.Builder(ImagePart, TextPart)`, confirmed by
+     *   decompiling the real `1.0.0-beta2` AAR the same way [PromptPrefix]
+     *   was). This is what lets Gemini Nano react to what the Pixel 10's
+     *   camera actually saw, not only to the structured detector findings
+     *   [com.digitalpet.vision.VisionAnalyzer] folds into [systemPrompt] —
+     *   see [com.digitalpet.conversation.PetConversationEngine.describeSight].
      */
     fun generate(
         prompt: String,
@@ -163,6 +173,7 @@ class LlmManager @Inject constructor(
         maxTokens: Int = 512,
         temperature: Float = 0.7f,
         @Suppress("UNUSED_PARAMETER") topP: Float = 0.9f,
+        image: Bitmap? = null,
     ): Flow<String> {
         val approxTokens = (systemPrompt.length + prompt.length) / APPROX_CHARS_PER_TOKEN
         if (approxTokens > TOKEN_CEILING) {
@@ -173,13 +184,25 @@ class LlmManager @Inject constructor(
             )
         }
 
-        val request = generateContentRequest(TextPart(prompt)) {
-            this.promptPrefix = PromptPrefix(systemPrompt)
-            this.temperature = temperature
-            this.maxOutputTokens = maxTokens
+        val textPart = TextPart(prompt)
+        val request = if (image != null) {
+            generateContentRequest(ImagePart(image), textPart) {
+                this.promptPrefix = PromptPrefix(systemPrompt)
+                this.temperature = temperature
+                this.maxOutputTokens = maxTokens
+            }
+        } else {
+            generateContentRequest(textPart) {
+                this.promptPrefix = PromptPrefix(systemPrompt)
+                this.temperature = temperature
+                this.maxOutputTokens = maxTokens
+            }
         }
 
-        diagnosticLogger.log(TAG, "generate started — maxTokens=$maxTokens, temp=$temperature")
+        diagnosticLogger.log(
+            TAG,
+            "generate started — maxTokens=$maxTokens, temp=$temperature, image=${image != null}"
+        )
 
         return generativeModel.generateContentStream(request)
             .map { chunk -> chunk.candidates.firstOrNull()?.text.orEmpty() }

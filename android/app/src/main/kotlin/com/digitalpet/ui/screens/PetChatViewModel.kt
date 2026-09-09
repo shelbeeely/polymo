@@ -65,6 +65,17 @@ class PetChatViewModel @Inject constructor(
      */
     fun sendMessage(text: String) = conversation.sendMessage(text)
 
+    /**
+     * Show the pet what this phone's own camera sees. See
+     * PetConversationEngine.describeSight for the full pipeline; this is a
+     * thin pass-through for the same reason sendMessage is one.
+     */
+    fun describeSight(bitmap: android.graphics.Bitmap, rotationDegrees: Int) =
+        conversation.describeSight(bitmap, rotationDegrees)
+
+    /** See PetConversationEngine.acknowledgeDocumentScan. */
+    fun acknowledgeDocumentScan(pageCount: Int) = conversation.acknowledgeDocumentScan(pageCount)
+
     /** Throw the transcript away. See PetConversationEngine.clearConversation. */
     fun clearConversation() = conversation.clearConversation()
 

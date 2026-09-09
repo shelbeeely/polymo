@@ -70,15 +70,19 @@ class PermissionInventoryTest {
         assertEquals(How.DIALOG, Grant.BLUETOOTH_CONNECT.how)
         assertEquals(How.DIALOG, Grant.POST_NOTIFICATIONS.how)
         assertEquals(How.DIALOG, Grant.RECORD_AUDIO.how)
+        assertEquals(How.DIALOG, Grant.CAMERA.how)
     }
 
     @Test
     fun `ordered by how badly the pet is broken without it`() {
         // The same rule as PetFaculty and the settings index. Bluetooth first
-        // because nothing works at all without it; the microphone last because
-        // the pet has its own and this is only the phone fallback.
+        // because nothing works at all without it; the camera last because the
+        // pet has none of its own yet and the whole conversation loop works
+        // without it — even the phone-mic fallback (RECORD_AUDIO) is more
+        // essential, since it keeps the core conversation working at all.
         assertEquals(Grant.BLUETOOTH_CONNECT, Grant.entries.first())
-        assertEquals(Grant.RECORD_AUDIO, Grant.entries.last())
+        assertEquals(Grant.CAMERA, Grant.entries.last())
+        assertTrue(Grant.RECORD_AUDIO.ordinal < Grant.CAMERA.ordinal)
         // Screen time outranks both notification grants: it is the mechanic the
         // product is about, and without it the pet cannot fall ill at all.
         assertTrue(Grant.USAGE_ACCESS.ordinal < Grant.POST_NOTIFICATIONS.ordinal)

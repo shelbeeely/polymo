@@ -45,6 +45,17 @@
         listing over a recovery path.
     -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <!--
+        The Pixel 10's OWN camera — phase 11 of the AICore migration, distinct
+        from the pet's onboard camera (BLE, still pending physical hardware)
+        and the docked USB-OTG feed (still pending an empirical Camera2
+        EXTERNAL test). required=false for the same reason as usb.host: the
+        pet's core conversation loop does not depend on this phone having a
+        camera at all, so a phone without one must not be excluded from the
+        store listing.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
     <!--
         PACKAGE VISIBILITY, AND WHY THIS IS NOT QUERY_ALL_PACKAGES ANY MORE.

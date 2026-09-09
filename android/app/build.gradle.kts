@@ -230,6 +230,36 @@ dependencies {
     implementation(libs.mlkit.genai.prompt)
     implementation(libs.mlkit.genai.speech.recognition)
 
+    // The Pixel 10's own camera, phase 11 of the AICore migration — see
+    // vision/VisionAnalyzer.kt. CameraX rather than raw Camera2: this is an
+    // ordinary, fully-supported built-in camera, not the EXTERNAL/UVC path a
+    // docked pet camera would need, so there is no reason to hand-roll it.
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+
+    // Full ML Kit Vision roster, per the user's explicit "every API if
+    // possible" — each result folds into a persona turn rather than speaking
+    // independently (see VisionAnalyzer/VisionFinding). Face Mesh is included
+    // per an explicit confirmed decision; identity/people recognition is not
+    // in this roster at all (Face Detection stays presence-only). Digital Ink
+    // Recognition is excluded on purpose — not a camera API.
+    implementation(libs.mlkit.image.labeling)
+    implementation(libs.mlkit.face.detection)
+    implementation(libs.mlkit.face.mesh.detection)
+    implementation(libs.mlkit.pose.detection)
+    implementation(libs.mlkit.objects.detection)
+    implementation(libs.mlkit.barcode.scanning)
+    implementation(libs.mlkit.text.recognition)
+    implementation(libs.mlkit.segmentation.selfie)
+    // Document Scanner: a personal utility the user triggers directly, not a
+    // frame detector in the pet's perception loop — its output is for the
+    // user, not pet perception (see VisionScreen.kt).
+    implementation(libs.play.services.mlkit.document.scanner)
+    // Turns the ML Kit Task-based detector APIs into suspend calls.
+    implementation(libs.kotlinx.coroutines.play.services)
+
     // Unit tests for the pure logic only — parsing, framing and DSP. Nothing
     // here touches Android, a device or the model files.
     testImplementation(libs.junit)

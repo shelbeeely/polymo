@@ -1778,6 +1778,29 @@ which is `PetLiteralsTest`'s instrument pointed at a role rather than a number.
 a button card, and until it does this is `code-only` in the roster with the
 reason recorded.
 
+### 7.3c "Show the pet something" — a screen the design system does not have yet
+
+**Built as part of the AICore migration's phase 11**, the Pixel 10's own
+camera wired into the pet's perception (see CLAUDE.md's "The Pixel 10 as a
+second brain" section for the engineering side). Same precedent as 7.3a: it
+follows the existing `SettingsScaffold` frame and adds no components — a
+camera preview surface is platform content, not a design-system card, the
+same category as the BLE pairing scan list already in the app.
+
+Sits in the settings index above Permissions/Appearance, alongside the three
+feature rows (pet, AI status, screen time), because it is a fifth feature
+rather than app-wide chrome. This is a genuinely new *capability* rather than
+a state the existing "Your pet" flow could show, which is the distinction
+7.3a draws for Permissions and the reason this isn't folded into an existing
+screen instead.
+
+**Deliberately not drawn as "the pet's own eyes."** There is no pet-onboard
+camera yet — that is phase 9, still blocked on hardware — so the copy says
+"show the pet something" throughout rather than anything implying the pet is
+looking through its own senses. Worth restating if this is ever mocked
+properly: the UX distinction matters more once phase 9 or 10 actually ships
+and there is a second camera source to tell apart from this one.
+
 ### 7.4 States the design has now caught up on
 
 The previous list here — the off state, usage access off, nothing tracked, a

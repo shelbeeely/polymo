@@ -23,6 +23,13 @@ explicit choice over building a second on-device engine. None of the three
 faculties involve a user-imported model file any more (no `.gguf`, no Whisper
 `.bin`, no Piper `.onnx`+`.json`) — see `ModelRepository.kt`'s doc comment.
 
+**The Pixel 10 is the pet's second brain — see `vision/`.** Beyond the three
+conversation faculties above, the phone's own camera and the full ML Kit
+Vision roster feed the pet too: every detector result becomes a persona
+reply through the *same* pipeline a spoken question runs through, not a
+separate output channel. §"The Pixel 10 as a second brain" below has what
+shipped and what's still deferred.
+
 ## Read these first
 
 | Document | What it is |
@@ -133,6 +140,63 @@ and staying in character. They are appended to every prompt automatically.
 
 **A persona is paired with a face set.** Selecting a personality sets both, so
 the pet cannot look like one character and speak as another.
+
+## The Pixel 10 as a second brain: vision, camera, and what's deferred
+
+The governing principle, stated by the user rather than inferred: **the
+Pixel 10 should communicate as much back to the pet as possible for it to
+function.** Vision is not a phone-side utility bolted onto the app — every
+perception result folds into a persona turn (grounding text → the prompt →
+TTS → the pet's own speaker), reusing `PetConversationEngine`'s existing
+reply pipeline exactly the way a spoken question does. See `vision/`:
+[`VisionFinding.kt`](android/app/src/main/kotlin/com/digitalpet/vision/VisionFinding.kt)
+and
+[`VisionDescription.kt`](android/app/src/main/kotlin/com/digitalpet/vision/VisionDescription.kt)
+are pure Kotlin and unit-tested; [`VisionAnalyzer.kt`](android/app/src/main/kotlin/com/digitalpet/vision/VisionAnalyzer.kt)
+is the ML Kit-facing wrapper, isolated per detector so one failing detector
+never silences the rest.
+
+**Shipped — the Pixel 10's own camera (phase 11).** CameraX, plus the full
+ML Kit Vision roster the user asked for by name, not a curated subset: Image
+Labeling, Face Detection (presence/count only, never identity), Face Mesh
+Detection (kept in after explicitly confirming it still isn't identity
+matching), Pose Detection, Object Detection and Tracking, Barcode Scanning,
+Text Recognition, and Selfie Segmentation. All run in single-image mode,
+which for a still from this phone's own camera is not a compromise — nearly
+every one of these detectors runs a frame through the same model whether or
+not there is a live feed to track across. `PetConversationEngine.describeSight`
+sends the frame two ways at once: the raw bitmap to the Prompt API's
+multimodal call (`ImagePart` + `TextPart`, real signature confirmed by
+decompiling the AAR — see `LlmManager.generate`), and the detectors'
+structured findings as grounding text, because a dedicated OCR/barcode
+detector reads a value exactly where a small on-device model looking at
+pixels might not. Document Scanner is also wired, as the personal utility
+the user asked for — but deliberately *outside* this loop: a scan's pages
+are for the user, never fed to a detector, and `acknowledgeDocumentScan`
+only ever receives a page count.
+
+**Deferred, and why — in order:**
+
+| Phase | What | Blocked on |
+|---|---|---|
+| 9 | The pet's own onboard camera (BLE, ambient on-demand stills) | Physical camera hardware for the ESP32 pet, which does not exist yet — the user is building/adding it themselves. |
+| 10 | Docked live video over USB-OTG (Camera2 `EXTERNAL`) | The same hardware as phase 9, **and** an empirical test of whether this Pixel 10 actually exposes Camera2's `EXTERNAL` hardware level — OEM-gated, not guaranteed by the platform. No code gets written for phase 10 before that test runs. |
+
+**Non-negotiable, carried over from planning and worth restating here because
+getting it wrong breaks the whole migration: never unlock the bootloader** to
+force phase 10's `EXTERNAL` support if the empirical test fails. Speech
+Recognition Advanced mode — the foundation everything above depends on — is
+unsupported on unlocked bootloaders. If Camera2 `EXTERNAL` is unreachable
+without unlocking, phase 10 falls back to raw `UsbManager`/UVC-descriptor
+parsing instead (Path B), not to unlocking.
+
+**Already wired, and not part of this migration's camera work at all — noted
+here so its absence from the roster above doesn't read as a gap:** Android's
+own App Usage Stats API (`android.app.usage.UsageStatsManager`, via
+`AppUsageRepository`) has been feeding the pet since before AICore existed —
+it is the screen-time/sickness mechanic DESIGN.md §1 decision 3 describes,
+and it answers to the exact same "the phone is the pet's second brain"
+principle vision now extends: what the phone learns, the pet hears about.
 
 ## Where this is heading
 

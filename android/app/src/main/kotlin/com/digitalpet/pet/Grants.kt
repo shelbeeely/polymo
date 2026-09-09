@@ -62,6 +62,9 @@ object Grants {
                 context.packageName,
             ) == AppOpsManager.MODE_ALLOWED
         }
+
+        PermissionInventory.Grant.CAMERA ->
+            granted(context, Manifest.permission.CAMERA)
     }
 
     /** Every grant's state in one read, in [PermissionInventory.Grant] order. */

@@ -1,5 +1,6 @@
 package com.digitalpet.conversation
 
+import android.graphics.Bitmap
 import com.digitalpet.audio.AudioPlayer
 import com.digitalpet.audio.PetSpeechRepository
 import com.digitalpet.audio.PetVoiceRepository
@@ -17,6 +18,8 @@ import com.digitalpet.pet.PetReadiness
 import com.digitalpet.text.PetText
 import com.digitalpet.tts.TtsService
 import com.digitalpet.util.DiagnosticLogger
+import com.digitalpet.vision.VisionAnalyzer
+import com.digitalpet.vision.VisionDescription
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -78,6 +81,7 @@ class PetConversationEngine @Inject constructor(
     private val petBle: PetBleRepository,
     private val petVoice: PetVoiceRepository,
     private val petSpeech: PetSpeechRepository,
+    private val visionAnalyzer: VisionAnalyzer,
     /**
      * Injected for its constructor, which restores the LLM, voice and STT models
      * from the last-used paths. Not called from here at all.
@@ -620,6 +624,85 @@ class PetConversationEngine @Inject constructor(
         )
     }
 
+    /**
+     * The user showed the pet something through this phone's own camera.
+     *
+     * **This is the "Pixel 10 as second brain" turn.** Everything the phone's
+     * camera and ML Kit Vision can determine about the frame runs through
+     * exactly the same reply pipeline a spoken question does — grounding text
+     * → the persona → TTS → the pet's own speaker — because a vision result
+     * that only updates a log is not communicating back to the pet at all.
+     *
+     * Sent two ways at once, deliberately: the raw [bitmap] goes to the
+     * Prompt API's multimodal call so Gemini Nano forms its own impression,
+     * and [VisionAnalyzer]'s structured findings go into the prompt text as
+     * grounding — a small on-device model looking at pixels can miss or
+     * misread a barcode value or an OCR'd line that a dedicated detector
+     * reads exactly. Neither replaces the other.
+     *
+     * Refuses under the same rule [sendMessage] does: this is a turn, and a
+     * turn started before the LLM/STT/TTS trio is ready fails silently rather
+     * than answering, so it is refused with a spoken reason instead.
+     */
+    fun describeSight(bitmap: Bitmap, rotationDegrees: Int = 0) {
+        if (_isGenerating.value) return
+
+        val readiness = models.readiness.value
+        if (readiness !is PetReadiness.Ready) {
+            PetReadiness.petText(readiness)?.let { pushToPet(it) }
+            logger.log(TAG, "vision turn refused - not ready: $readiness")
+            return
+        }
+
+        persistMessage(Message(role = MessageRole.USER, content = "[Showed the pet something]"))
+
+        scope.launch {
+            val findings = try {
+                visionAnalyzer.analyze(bitmap, rotationDegrees)
+            } catch (e: Exception) {
+                logger.log(TAG, "vision analysis failed: ${e.message}")
+                emptyList()
+            }
+            val grounding = VisionDescription.build(findings)
+            logger.log(TAG, "describeSight — grounding=\"$grounding\"")
+
+            val prompt = if (grounding.isNotBlank()) {
+                "You are looking through the phone's camera. On-device vision " +
+                    "detected this: $grounding React briefly, in character, to " +
+                    "what you see."
+            } else {
+                "You are looking through the phone's camera, but nothing " +
+                    "recognisable was detected. React briefly, in character."
+            }
+
+            startGenerationWithPrompt(prompt, image = bitmap)
+        }
+    }
+
+    /**
+     * The user finished scanning a document with [com.digitalpet.vision.DocumentScanner].
+     *
+     * **Deliberately not a vision turn.** Per the plan's own privacy line:
+     * the scanned pages and their text are a personal utility output for the
+     * user, not something fed into the pet's perception the way
+     * [describeSight]'s frames are — so this never touches [VisionAnalyzer]
+     * or the scanned image at all, only the page count. What it shares with
+     * [describeSight] is the destination, not the input: a short in-persona
+     * line through the same reply pipeline, because the user still asked the
+     * pet to notice they did something.
+     */
+    fun acknowledgeDocumentScan(pageCount: Int) {
+        if (_isGenerating.value) return
+        if (models.readiness.value !is PetReadiness.Ready) return
+
+        val pages = if (pageCount == 1) "a document" else "a $pageCount-page document"
+        persistMessage(Message(role = MessageRole.USER, content = "[Scanned $pages]"))
+        startGenerationWithPrompt(
+            "The user just scanned $pages with their phone. Say something short " +
+                "and in character acknowledging it — you don't know what it says."
+        )
+    }
+
     // --- generation ---------------------------------------------------------
 
     private fun startGenerationWithPrompt(
@@ -660,7 +743,9 @@ class PetConversationEngine @Inject constructor(
          * [SystemPromptManager.conditionClause] then says nothing rather than
          * claiming the pet is fine.
          */
-        condition: PetProtocol.Condition? = petBle.condition.value
+        condition: PetProtocol.Condition? = petBle.condition.value,
+        /** See [describeSight] — forwarded to [LlmManager.generate]'s multimodal path. */
+        image: Bitmap? = null,
     ) {
         // NOT gated on _active: see sendMessage. Everything the pet initiates is
         // gated at its own call site instead, which is where the distinction
@@ -785,7 +870,8 @@ class PetConversationEngine @Inject constructor(
                 llmManager.generate(
                     prompt = promptText,
                     systemPrompt = systemInstruction,
-                    maxTokens = maxTokens
+                    maxTokens = maxTokens,
+                    image = image
                 ).takeWhile { token ->
                     responseBuilder.append(token)
 
