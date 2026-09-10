@@ -155,11 +155,16 @@ enum {
     PET_CAP_QUIET    = 1u << 15, /* v10: quiet hours can be set and read back */
 };
 
-/* What this firmware currently supports. */
+/* What this firmware currently supports. Overridable at compile time (see
+ * pet-esp32-x4/main/CMakeLists.txt) for a board that doesn't have every
+ * faculty the S3 board does — pet_ble.c uses this value unchanged either
+ * way, so a board with fewer characteristics just advertises fewer caps. */
+#ifndef PET_CAPABILITIES
 #define PET_CAPABILITIES \
     (PET_CAP_TEXT | PET_CAP_MOOD | PET_CAP_EVENTS | PET_CAP_MIC | PET_CAP_SPEAKER | \
      PET_CAP_STATUS | PET_CAP_SIM | PET_CAP_SCREEN | PET_CAP_LIFE | \
      PET_CAP_BATTERY | PET_CAP_CLOCK | PET_CAP_FACESET | PET_CAP_QUIET)
+#endif
 
 /* ---- v4: expression, status and condition are three different things ------
  *

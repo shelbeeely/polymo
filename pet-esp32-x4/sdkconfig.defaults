@@ -1,0 +1,62 @@
+# PolyMO Lite — Xteink X4 (ESP32-C3, no PSRAM, 16 MB flash per the public
+# teardown; CONFIRM the flash chip/mode against the physical unit before
+# shipping this — unlike the S3 board this file has no bring-up history yet).
+CONFIG_IDF_TARGET_ESP32C3=y
+
+# Flash — 16 MB per public teardown info. FLASHMODE is a guess (DIO is the
+# safer default for an unconfirmed flash chip; QIO is faster but wrong-mode
+# can hang boot). Confirm both against the board before relying on this.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# Custom partition table — see partitions.csv. SD card carries bulk storage
+# instead of a big SPIFFS partition; this board has no PSRAM to make up for.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# NO CONFIG_SPIRAM* HERE. The ESP32-C3 has no PSRAM interface at all — unlike
+# the S3 board's octal-PSRAM config this isn't a choice, it's a hardware fact.
+# Every buffer (display framebuffer included) has to fit in ~380 KB of
+# internal SRAM, shared with the BLE stack and everything else.
+
+# Performance — C3 tops out at 160 MHz (single RISC-V core, vs. the S3's dual
+# Xtensa at 240 MHz).
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
+
+# Power management — DFS + tickless idle, same reasoning as the S3 board.
+# UNLIKE the S3 board, deep sleep is not a "separate, riskier step" here: this
+# is an e-paper display, so the screen keeps showing its last frame with the
+# rail off, and FreeInk's own PowerManager exists specifically to deep-sleep
+# between button presses/refreshes. That said, this pet still holds a BLE
+# connection to the phone the way the S3 board does, and the S3's light-sleep
+# attempt broke that connection's timing — do not assume deep sleep and an
+# open BLE connection coexist cleanly here until it's actually measured; see
+# pet-esp32-x4/main's power-management notes.
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+
+# Bigger main task stack — carried over from the S3 board's LVGL rationale,
+# which doesn't apply here (this target uses FreeInkUI, not LVGL), but kept as
+# a conservative default until measured: Arduino-as-IDF-component init and
+# FreeInkUI's own compositing both run on the main task before anything else
+# gets a chance to.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# BLE — NimBLE host (peripheral), identical reasoning to the S3 board: same
+# protocol (pet_ble.c/pet_proto.h are shared, unmodified, between both boards),
+# same bond-persistence need, same log-volume concern.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
+
+# Arduino-as-ESP-IDF-component (pulled in for the vendored FreeInk SDK, which
+# is written against the Arduino framework — see components/freeink and
+# main/idf_component.yml). ITS OWN KCONFIG SYMBOLS ARE NOT FILLED IN HERE: the
+# exact option names depend on the pinned espressif/arduino-esp32 component
+# version, which needs `idf.py reconfigure` against a real checkout to
+# discover rather than guessing plausible-looking CONFIG_ARDUINO_* names here.
+# At minimum expect to set autostart off (app_main is ours, in
+# pet_x4_main.cpp — it calls initArduino() itself rather than letting the
+# Arduino component provide app_main/setup()/loop()).

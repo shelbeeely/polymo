@@ -1,0 +1,8 @@
+dependencies:
+  # Arduino-as-ESP-IDF-component bridge, needed to compile the vendored
+  # FreeInk SDK (components/freeink, components/SdFat) — both are written
+  # against the Arduino framework, not native ESP-IDF. Pin this to a real
+  # resolved version once `idf.py reconfigure` runs against it; "*" here is a
+  # placeholder, not a claim that any version works.
+  espressif/arduino-esp32: "*"
+  idf: ">=5.1"

@@ -68,6 +68,25 @@ Used by the ESP32-S3 firmware:
   LVGL               MIT                https://github.com/lvgl/lvgl
   Waveshare BSP      MIT                esp32_s3_touch_amoled_1_8
 
+Used by the ESP32-C3 (Xteink X4) "Lite" firmware (pet-esp32-x4/), vendored
+under pet-esp32-x4/components/ rather than fetched at build time -- see
+pet-esp32-x4/components/freeink/CMakeLists.txt for what's compiled in and
+why nothing needed per-file exclusion:
+
+  ESP-IDF            Apache-2.0         https://github.com/espressif/esp-idf
+  arduino-esp32      LGPL-2.1           https://github.com/espressif/arduino-esp32
+                     (Arduino-as-ESP-IDF-component, managed dependency --
+                     not vendored source; see main/idf_component.yml)
+  FreeInk SDK        MIT                https://github.com/Free-Ink/freeink-sdk
+                     commit 2d9f0ffdf765 -- licence text: licences/MIT-FreeInk.txt.
+                     libs/book/ (FreeInkBook, ContentProtection) deliberately
+                     NOT vendored -- a product feature (EPUB reading) out of
+                     scope for a virtual pet, not a hardware driver.
+  SdFat              MIT                https://github.com/greiman/SdFat
+                     commit cda057318bec (v2.3.1) -- licence text:
+                     licences/MIT-SdFat.txt. Pulled in because FreeInk's
+                     SDCardManager depends on it and doesn't vendor it itself.
+
 Bundled fonts (full texts in licences/):
 
   Baloo 2            SIL OFL 1.1        licences/OFL-Baloo2.txt

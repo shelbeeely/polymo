@@ -1,0 +1,28 @@
+# PolyMO Lite — Xteink X4 (ESP32-C3) custom partition table (16 MB flash).
+#
+# Mirrors pet-esp32/partitions.csv's reasoning (two OTA slots, no wasted flash)
+# but shifts the "bulk asset storage" job onto the X4's SD card instead of a
+# large SPIFFS partition: this device has no PSRAM and drops LVGL/Opus/mic/
+# speaker, so the app itself should be smaller than the S3 build, and the SD
+# card is a better home for anything that grows over the pet's lifetime
+# (extended history past what fits in `nvs`, diagnostic logs) since it can be
+# swapped/read on a computer without reflashing. See pet-esp32-x4/main's SD
+# wiring notes for what actually lands there.
+#
+# `assets` here is deliberately small: it is for whatever FreeInkUI needs
+# before the SD card is mounted (or when no card is inserted at all) — icon
+# bitmaps, bundled fonts — not sprite/frame sequences.
+#
+# App partitions must start on a 64 KB boundary.
+#
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+otadata,    data, ota,     0xF000,   0x2000,
+phy_init,   data, phy,     0x11000,  0x1000,
+ota_0,      app,  ota_0,   0x20000,  0x400000,
+ota_1,      app,  ota_1,   0x420000, 0x400000,
+assets,     data, spiffs,  0x820000, 0x100000,
+coredump,   data, coredump,0x920000, 0x10000,
+# ~6.9 MB left unpartitioned past 0x930000 — deliberately not spent yet.
+# Grow ota_0/ota_1 here once a real Lite build size is measured, rather than
+# guessing a bigger number now.
